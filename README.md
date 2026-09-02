@@ -31,58 +31,32 @@ npm run set-password -- PAROLA_NOUA
 
 ## Producție
 
-### Reverse proxy (nginx)
+Live pe **https://cloud.acsr.ro** — Node pe `127.0.0.1:4300`, în spatele nginx,
+cu `COOKIE_SECURE=true` în `.env`.
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name cloud.acsr.ro;
-
-    # certificatele tale ssl_certificate / ssl_certificate_key
-
-    client_max_body_size 2200M;      # >= MAX_UPLOAD_MB
-    proxy_read_timeout 600s;
-    proxy_request_buffering off;     # streaming upload, nu buffer pe disc în nginx
-
-    location / {
-        proxy_pass http://127.0.0.1:4300;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Cu HTTPS activ, setează `COOKIE_SECURE=true` în `.env`.
-
-### Serviciu (systemd)
-
-```ini
-# /etc/systemd/system/cloud-acsr.service
-[Unit]
-Description=cloud.acsr.ro gallery
-After=network.target
-
-[Service]
-WorkingDirectory=/var/www/cloud.acsr.ro
-ExecStart=/usr/bin/node server.js
-Restart=on-failure
-Environment=NODE_ENV=production
-User=www-data
-Group=www-data
-
-[Install]
-WantedBy=multi-user.target
-```
+### Proces (pm2, ca restul site-urilor de pe server)
 
 ```bash
-systemctl enable --now cloud-acsr
+pm2 start server.js --name cloud-acsr --cwd /var/www/cloud.acsr.ro
+pm2 save
 ```
 
-(Sau via pm2, ca celelalte site-uri de pe server:
-`pm2 start server.js --name cloud-acsr`)
+Utilitare: `pm2 restart cloud-acsr`, `pm2 logs cloud-acsr`.
+
+### Reverse proxy (nginx)
+
+Vhost-ul folosit e versionat în [`deploy/nginx.conf`](deploy/nginx.conf) și
+instalat la `/etc/nginx/sites-available/cloud.acsr.ro.conf`. Puncte cheie:
+`client_max_body_size 2200m` (>= `MAX_UPLOAD_MB`), `proxy_request_buffering off`
+și timeout-uri de 600s pentru upload-uri mari.
+
+Certificat Let's Encrypt obținut cu:
+
+```bash
+certbot certonly --webroot -w /var/www/certbot -d cloud.acsr.ro
+```
+
+(reînnoire automată prin task-ul certbot deja configurat pe server)
 
 ## Model de securitate
 
