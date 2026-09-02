@@ -18,6 +18,9 @@ let trashList = [];
 let albums = [];
 let memories = [];
 let query = '';
+let filterType = 'all';
+let filterFav = false;
+let filterYear = '';
 let density = 'm';
 let cur = { view: 'all', albumId: null, album: null, items: [] };
 
@@ -326,12 +329,23 @@ function applySearch(list) {
     (m.takenAt || m.createdAt).slice(0, 10).includes(q));
 }
 
+function applyFilters(list) {
+  return list.filter((m) => {
+    if (filterType !== 'all' && m.type !== filterType) return false;
+    if (filterFav && !m.favorite) return false;
+    if (filterYear && String(new Date(m.takenAt || m.createdAt).getFullYear()) !== filterYear) return false;
+    return true;
+  });
+}
+
 function gridData() {
-  if (cur.view === 'highlights') return applySearch(media.filter((m) => m.favorite));
-  if (cur.view === 'archive') return applySearch(archiveList);
-  if (cur.view === 'trash') return applySearch(trashList);
   if (cur.view === 'album') return cur.items;
-  return applySearch(media);
+  if (cur.view === 'trash') return applySearch(trashList);
+  let base;
+  if (cur.view === 'highlights') base = media.filter((m) => m.favorite);
+  else if (cur.view === 'archive') base = archiveList;
+  else base = media;
+  return applyFilters(applySearch(base));
 }
 
 // ─── Randare ───────────────────────────────────────────────────────────────
@@ -340,10 +354,25 @@ function renderGrid() {
   $('gridTitle').textContent = TITLES[cur.view] || 'Poze';
   $('emptyTrashBtn').hidden = cur.view !== 'trash' || trashList.length === 0;
   $('trashNote').hidden = cur.view !== 'trash';
+  renderChips();
   renderMemories();
   buildGallery($('grid'), list);
   $('gridEmpty').hidden = list.length > 0;
   $('gridEmptyText').textContent = EMPTY[cur.view] || 'Gol.';
+}
+
+function renderChips() {
+  const show = cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive';
+  $('chips').hidden = !show;
+  if (!show) return;
+  document.querySelectorAll('.chip[data-type]').forEach((b) => b.classList.toggle('on', b.dataset.type === filterType));
+  $('chipFav').classList.toggle('on', filterFav);
+  const sel = $('chipYear');
+  const src = cur.view === 'highlights' ? media.filter((m) => m.favorite) : cur.view === 'archive' ? archiveList : media;
+  const years = [...new Set(src.map((m) => new Date(m.takenAt || m.createdAt).getFullYear()))].sort((a, b) => b - a);
+  const want = ['<option value="">Toți anii</option>'].concat(years.map((y) => '<option value="' + y + '">' + y + '</option>')).join('');
+  if (sel.dataset.built !== want) { sel.innerHTML = want; sel.dataset.built = want; }
+  sel.value = filterYear;
 }
 
 function renderMemories() {
@@ -566,6 +595,9 @@ function renderSelActions() {
       } catch (e) { toast(e.message); }
     }));
   }
+  box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => {
+    location.href = '/api/download?ids=' + [...selected].join(',');
+  }));
   box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
 }
 
@@ -652,6 +684,8 @@ async function openShareModal(kind, id, item) {
     ? 'Oricine are linkul poate vedea toate pozele din album, fără parolă.'
     : 'Oricine are linkul poate vedea această poză, fără parolă.';
   $('shareUrl').value = location.origin + pubPrefix + token;
+  $('shareQrWrap').hidden = true;
+  $('shareQr').removeAttribute('src');
   $('shareModal').hidden = false;
   if (kind === 'album') renderAlbum();
 }
@@ -784,6 +818,7 @@ function openLightbox(list, id) {
 }
 
 function closeLightbox() {
+  resetZoom();
   stopSlideshow();
   lb.hidden = true;
   lb.classList.remove('has-info');
@@ -792,9 +827,75 @@ function closeLightbox() {
   document.body.classList.remove('no-scroll');
 }
 
+let zoom = { s: 1, x: 0, y: 0 };
+function zoomImg() { return lbStage.querySelector('img'); }
+function applyZoom() {
+  const im = zoomImg();
+  if (!im) return;
+  im.style.transform = 'translate(' + zoom.x + 'px,' + zoom.y + 'px) scale(' + zoom.s + ')';
+  lbStage.classList.toggle('zoomed', zoom.s > 1.01);
+}
+function resetZoom() { zoom = { s: 1, x: 0, y: 0 }; lbStage.classList.remove('zoomed', 'grabbing'); const im = zoomImg(); if (im) im.style.transform = ''; }
+function zoomAt(factor, cx, cy) {
+  const im = zoomImg();
+  if (!im) return;
+  const r = lbStage.getBoundingClientRect();
+  const ox = cx - r.left - r.width / 2;
+  const oy = cy - r.top - r.height / 2;
+  const ns = Math.max(1, Math.min(6, zoom.s * factor));
+  const k = ns / zoom.s;
+  zoom.x = ox - (ox - zoom.x) * k;
+  zoom.y = oy - (oy - zoom.y) * k;
+  zoom.s = ns;
+  if (zoom.s === 1) { zoom.x = 0; zoom.y = 0; }
+  applyZoom();
+}
+function initLightboxZoom() {
+  const pts = new Map();
+  let lastDist = 0;
+  lbStage.addEventListener('wheel', (e) => {
+    if (!zoomImg()) return;
+    e.preventDefault();
+    zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+  }, { passive: false });
+  lbStage.addEventListener('dblclick', (e) => {
+    if (!zoomImg()) return;
+    if (zoom.s > 1.01) resetZoom();
+    else zoomAt(2.5, e.clientX, e.clientY);
+  });
+  lbStage.addEventListener('pointerdown', (e) => {
+    if (!zoomImg()) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1 && zoom.s > 1.01) { lbStage.classList.add('grabbing'); lbStage.setPointerCapture(e.pointerId); }
+  });
+  lbStage.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId);
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) {
+      const p = [...pts.values()];
+      const dist = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+      if (lastDist) zoomAt(dist / lastDist, (p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2);
+      lastDist = dist;
+    } else if (pts.size === 1 && zoom.s > 1.01) {
+      zoom.x += dx; zoom.y += dy; applyZoom();
+    }
+  });
+  const up = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) lastDist = 0;
+    if (pts.size === 0) lbStage.classList.remove('grabbing');
+  };
+  lbStage.addEventListener('pointerup', up);
+  lbStage.addEventListener('pointercancel', up);
+}
+
 function showLb() {
   const it = lbList[lbIndex];
   lbStage.textContent = '';
+  resetZoom();
   if (!it) return;
   if (it.type === 'video') {
     const v = document.createElement('video');
@@ -1228,4 +1329,24 @@ function wire() {
     const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
     if (files.length) uploadFiles(files);
   });
+
+  // filtre (chips)
+  document.querySelectorAll('.chip[data-type]').forEach((b) => {
+    b.onclick = () => { filterType = b.dataset.type; renderGrid(); };
+  });
+  $('chipFav').onclick = () => { filterFav = !filterFav; renderGrid(); };
+  $('chipYear').onchange = (e) => { filterYear = e.target.value; renderGrid(); };
+
+  // cod QR în fereastra de partajare
+  $('shareQrBtn').onclick = () => {
+    const w = $('shareQrWrap');
+    if (w.hidden) {
+      $('shareQr').src = '/qr?data=' + encodeURIComponent($('shareUrl').value);
+      w.hidden = false;
+    } else {
+      w.hidden = true;
+    }
+  };
+
+  initLightboxZoom();
 }

@@ -9,7 +9,7 @@
   <script src="/assets/theme-init.js"></script>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=11">
+  <link rel="stylesheet" href="/assets/styles.css?v=12">
 </head>
 <body>
   <div class="app">
@@ -77,6 +77,13 @@
         </div>
         <div id="trashNote" class="banner" hidden>
           <span class="msi">schedule</span> Elementele din coș se șterg definitiv după 30 de zile.
+        </div>
+        <div id="chips" class="chips" hidden>
+          <button class="chip on" data-type="all" type="button">Toate</button>
+          <button class="chip" data-type="image" type="button">Foto</button>
+          <button class="chip" data-type="video" type="button">Video</button>
+          <button id="chipFav" class="chip" data-fav="1" type="button"><span class="msi">star</span>Favorite</button>
+          <select id="chipYear" class="chip-year"><option value="">Toți anii</option></select>
         </div>
         <div id="memStrip" class="mem-strip" hidden></div>
         <div id="grid" class="j-scroll"></div>
@@ -152,8 +159,10 @@
         <input id="shareUrl" type="text" readonly>
         <button id="shareCopy" class="btn primary">Copiază</button>
       </div>
+      <div id="shareQrWrap" class="share-qr" hidden><img id="shareQr" alt="Cod QR" width="200" height="200"></div>
       <div class="modal-actions">
         <button id="shareRevoke" class="btn ghost danger">Dezactivează linkul</button>
+        <button id="shareQrBtn" class="btn ghost"><span class="msi">qr_code_2</span>Cod QR</button>
         <button id="shareClose" class="btn">Închide</button>
       </div>
     </div>
@@ -214,6 +223,6 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/assets/app.js?v=11"></script>
+  <script src="/assets/app.js?v=12"></script>
 </body>
 </html>

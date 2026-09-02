@@ -13,10 +13,13 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const SqliteStore = require('better-sqlite3-session-store')(session);
+const QRCode = require('qrcode');
+const archiver = require('archiver');
 
 const db = require('./lib/db');
 const {
   processUpload,
+  backfillVideoThumbs,
   DATA_DIR,
   ORIGINAL_DIR,
   THUMB_DIR,
@@ -308,6 +311,66 @@ app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
   if ('caption' in b) { sets.push('caption = @caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
   if (sets.length) db.prepare(`UPDATE media SET ${sets.join(', ')} WHERE id = @id`).run(vals);
   res.json({ ok: true });
+});
+
+// Descărcare în bloc a mai multor elemente, ca arhivă ZIP
+app.get('/api/download', requireAuth, (req, res) => {
+  const ids = String(req.query.ids || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => UUID_RE.test(s))
+    .slice(0, 500);
+  if (!ids.length) return res.status(400).json({ error: 'nimic de descărcat' });
+
+  const rows = ids
+    .map((id) => db.prepare('SELECT * FROM media WHERE id = ?').get(id))
+    .filter((r) => r && !r.deleted_at);
+  if (!rows.length) return res.status(404).json({ error: 'nu există' });
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', 'attachment; filename="cloud-poze.zip"');
+
+  const archive = archiver('zip', { zlib: { level: 0 } }); // media deja comprimată
+  archive.on('warning', (e) => console.warn('zip:', e.message));
+  archive.on('error', (e) => { console.error('zip:', e); if (!res.headersSent) res.status(500).end(); else res.end(); });
+  archive.pipe(res);
+
+  const used = new Set();
+  for (const r of rows) {
+    const full = path.join(ORIGINAL_DIR, r.stored_name);
+    if (!fs.existsSync(full)) continue;
+    let name = r.original_name || r.stored_name;
+    if (used.has(name)) {
+      const dot = name.lastIndexOf('.');
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : '';
+      let i = 2;
+      while (used.has(`${base} (${i})${ext}`)) i++;
+      name = `${base} (${i})${ext}`;
+    }
+    used.add(name);
+    archive.file(full, { name });
+  }
+  archive.finalize();
+});
+
+// Cod QR pentru un link (SVG). Doar pentru linkurile proprii de partajare.
+app.get('/qr', requireAuth, async (req, res) => {
+  const data = String(req.query.data || '');
+  let ok = false;
+  try {
+    const u = new URL(data);
+    ok = u.host === req.get('host') && (u.pathname.startsWith('/s/') || u.pathname.startsWith('/p/'));
+  } catch { ok = false; }
+  if (!ok || data.length > 512) return res.status(400).end();
+  try {
+    const svg = await QRCode.toString(data, { type: 'svg', margin: 1, width: 240 });
+    res.set('Content-Type', 'image/svg+xml');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.send(svg);
+  } catch {
+    res.status(500).end();
+  }
 });
 
 // Mută în coș (soft delete) / restaurează
@@ -612,4 +675,6 @@ setInterval(purgeTrash, 6 * 60 * 60 * 1000).unref();
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
+  // în fundal: generează postere pentru clipurile fără thumbnail
+  Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
 });
