@@ -205,8 +205,22 @@ body {
 .view { flex: 1; }
 .section-head { display: flex; align-items: center; gap: 10px; max-width: 1720px; margin: 0 auto; padding: 20px 24px 4px; }
 .section-head h1 { font-size: 22px; font-weight: 400; margin: 0; }
-.album-head { flex-wrap: wrap; }
-.album-head h1 { font-size: 20px; }
+
+/* ─── Antet album (stil Google Photos) ─── */
+.album-head {
+  display: flex; align-items: center; gap: 8px;
+  max-width: 1720px; margin: 0 auto; padding: 14px 24px 0;
+}
+.album-head-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.album-title-wrap { max-width: 1720px; margin: 0 auto; padding: 4px 24px 8px; }
+#albumTitle {
+  font-size: 30px; font-weight: 400; margin: 0; display: inline-block;
+  min-width: 40px; max-width: 100%; border-radius: 6px; padding: 2px 6px; margin-left: -6px;
+  cursor: text; outline: none; line-height: 1.25;
+}
+#albumTitle:hover { background: var(--hover); }
+#albumTitle[contenteditable="true"] { background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); cursor: text; }
+.album-sub-line { font-size: 13px; margin-top: 4px; padding: 0 6px; }
 
 .banner {
   max-width: 1720px; margin: 8px auto 0; padding: 10px 24px;
@@ -392,6 +406,21 @@ body.selecting .chk { opacity: 1; }
 .icon-btn.dark { color: var(--text-dim); }
 .icon-btn.dark:hover { background: var(--hover); }
 .lb-fav.on { color: var(--star); }
+.lb-share.on { color: var(--accent); }
+
+/* ─── Pagină publică: o singură poză ─── */
+.pub-photo { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 16px; }
+.pub-stage {
+  width: 100%; max-width: 1200px; flex: 1; min-height: 0;
+  display: grid; place-items: center;
+}
+.pub-stage img, .pub-stage video {
+  max-width: 100%; max-height: calc(100vh - 160px); border-radius: 10px; display: block;
+}
+.pub-cap {
+  max-width: 1200px; padding: 14px 8px 4px; text-align: center;
+  font-size: 13px; color: var(--text-dim); white-space: pre-line;
+}
 .lb-nav {
   position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px;
   background: rgba(0, 0, 0, .35); z-index: 3;

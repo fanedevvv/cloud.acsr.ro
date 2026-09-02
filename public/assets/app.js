@@ -677,6 +677,8 @@ async function revokeShare() {
 const pickerSel = new Set();
 function openPicker() {
   pickerSel.clear();
+  $('pickerTitle').textContent = 'Alege poze';
+  $('pickerConfirm').hidden = false;
   const inAlbum = new Set(cur.items.map((x) => x.id));
   const avail = media.filter((x) => !inAlbum.has(x.id));
   const grid = $('pickerGrid');
@@ -813,9 +815,11 @@ function showLb() {
   lb.querySelector('.lb-archive').hidden = trash;
   lb.querySelector('.lb-del').hidden = trash;
   lb.querySelector('.lb-slideshow').hidden = trash;
+  lb.querySelector('.lb-share').hidden = trash;
   lb.querySelector('.lb-restore').hidden = !trash;
   lb.querySelector('.lb-purge').hidden = !trash;
   lb.querySelector('.lb-fav').classList.toggle('on', !!it.favorite);
+  lb.querySelector('.lb-share').classList.toggle('on', !!it.shareToken);
 
   lbStrip.querySelectorAll('.strip-thumb').forEach((el, i) => {
     el.classList.toggle('cur', i === lbIndex);
@@ -1167,6 +1171,7 @@ function wire() {
     else if (act === 'info') toggleInfo();
     else if (act === 'fav') lbFav();
     else if (act === 'slideshow') toggleSlideshow();
+    else if (act === 'share') { const it = lbList[lbIndex]; if (it) openShareModal('photo', it.id, it); }
     else if (act === 'archive') lbMutate((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', true);
     else if (act === 'trash') lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
     else if (act === 'restore') lbMutate((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', true);
