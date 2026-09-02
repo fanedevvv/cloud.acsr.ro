@@ -114,6 +114,81 @@ function getRow(id) {
   return db.prepare('SELECT * FROM media WHERE id = ?').get(id);
 }
 
+function getAlbum(id) {
+  if (!UUID_RE.test(String(id || ''))) return null;
+  return db.prepare('SELECT * FROM albums WHERE id = ?').get(id);
+}
+
+const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
+function getSharedAlbum(token) {
+  if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
+  return db.prepare('SELECT * FROM albums WHERE share_token = ?').get(token);
+}
+
+const jsonBody = express.json({ limit: '256kb' });
+
+const MEDIA_COLS = `
+  id, type, mime, original_name AS originalName, width, height, size,
+  duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt
+`;
+
+function mediaInAlbum(albumId) {
+  return db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media m
+    JOIN album_items ai ON ai.media_id = m.id
+    WHERE ai.album_id = ?
+    ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
+  `).all(albumId).map((r) => ({ ...r, hasThumb: !!r.hasThumb }));
+}
+
+function albumSummary(a) {
+  const count = db.prepare('SELECT COUNT(*) n FROM album_items WHERE album_id = ?').get(a.id).n;
+  const cover = db.prepare(`
+    SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
+    WHERE ai.album_id = ?
+    ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
+  `).get(a.id);
+  return {
+    id: a.id,
+    name: a.name,
+    createdAt: a.created_at,
+    count,
+    coverId: cover ? cover.id : null,
+    shareToken: a.share_token || null,
+  };
+}
+
+function sendThumb(row, res) {
+  const p = path.join(THUMB_DIR, `${row.id}.webp`);
+  if (!row.has_thumb || !fs.existsSync(p)) {
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.type('image/svg+xml');
+    return res.send(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">` +
+      `<rect width="100%" height="100%" fill="#e8eaed"/>` +
+      `<text x="50%" y="53%" font-size="90" text-anchor="middle" dominant-baseline="middle" fill="#9aa0a6">` +
+      (row.type === 'video' ? '&#9654;' : '&#128247;') +
+      `</text></svg>`
+    );
+  }
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type('image/webp');
+  fs.createReadStream(p).pipe(res);
+}
+
+function sendFull(row, res) {
+  const full = path.join(ORIGINAL_DIR, row.stored_name);
+  if (!fs.existsSync(full)) return res.status(404).end();
+  res.type(row.mime || 'application/octet-stream');
+  res.sendFile(full, {
+    acceptRanges: true,
+    dotfiles: 'deny',
+    headers: { 'Cache-Control': 'private, max-age=86400' },
+  }, (err) => {
+    if (err && !res.headersSent) res.status(err.status || 500).end();
+  });
+}
+
 // ─── Login / logout ─────────────────────────────────────────────────────────
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -186,39 +261,13 @@ app.post('/api/upload', requireAuth, checkCsrf, upload.array('files', 50), async
 app.get('/media/:id/thumb', requireAuth, (req, res) => {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).end();
-
-  const p = path.join(THUMB_DIR, `${row.id}.webp`);
-  if (!row.has_thumb || !fs.existsSync(p)) {
-    res.set('Cache-Control', 'private, max-age=3600');
-    res.type('image/svg+xml');
-    return res.send(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">` +
-      `<rect width="100%" height="100%" fill="#e8eaed"/>` +
-      `<text x="50%" y="53%" font-size="90" text-anchor="middle" dominant-baseline="middle" fill="#9aa0a6">` +
-      (row.type === 'video' ? '&#9654;' : '&#128247;') +
-      `</text></svg>`
-    );
-  }
-  res.set('Cache-Control', 'private, max-age=86400');
-  res.type('image/webp');
-  fs.createReadStream(p).pipe(res);
+  sendThumb(row, res);
 });
 
 app.get('/media/:id/full', requireAuth, (req, res) => {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).end();
-
-  const full = path.join(ORIGINAL_DIR, row.stored_name);
-  if (!fs.existsSync(full)) return res.status(404).end();
-
-  res.type(row.mime || 'application/octet-stream');
-  res.sendFile(full, {
-    acceptRanges: true,
-    dotfiles: 'deny',
-    headers: { 'Cache-Control': 'private, max-age=86400' },
-  }, (err) => {
-    if (err && !res.headersSent) res.status(err.status || 500).end();
-  });
+  sendFull(row, res);
 });
 
 // ─── Ștergere ───────────────────────────────────────────────────────────────
@@ -228,8 +277,136 @@ app.delete('/api/media/:id', requireAuth, checkCsrf, (req, res) => {
 
   fs.rmSync(path.join(ORIGINAL_DIR, row.stored_name), { force: true });
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.webp`), { force: true });
-  db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
+  db.prepare('DELETE FROM media WHERE id = ?').run(row.id); // cascade album_items
   res.json({ ok: true });
+});
+
+// ─── Albume ─────────────────────────────────────────────────────────────────
+app.get('/api/albums', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM albums ORDER BY created_at DESC').all();
+  res.json(rows.map(albumSummary));
+});
+
+app.post('/api/albums', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const name = String(req.body && req.body.name || '').trim().slice(0, 120);
+  if (!name) return res.status(400).json({ error: 'nume gol' });
+  const id = crypto.randomUUID();
+  db.prepare('INSERT INTO albums (id, name, created_at) VALUES (?, ?, ?)')
+    .run(id, name, new Date().toISOString());
+  res.json(albumSummary(getAlbum(id)));
+});
+
+app.get('/api/albums/:id', requireAuth, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  res.json({ album: albumSummary(a), items: mediaInAlbum(a.id) });
+});
+
+app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const name = String(req.body && req.body.name || '').trim().slice(0, 120);
+  if (!name) return res.status(400).json({ error: 'nume gol' });
+  db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, a.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/albums/:id', requireAuth, checkCsrf, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items
+  res.json({ ok: true });
+});
+
+app.post('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const ids = Array.isArray(req.body && req.body.ids)
+    ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
+  const ins = db.prepare('INSERT OR IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  const run = db.transaction((list) => {
+    let n = 0;
+    for (const mid of list) {
+      if (db.prepare('SELECT 1 FROM media WHERE id = ?').get(mid)) {
+        n += ins.run(a.id, mid, now).changes;
+      }
+    }
+    return n;
+  });
+  res.json({ added: run(ids) });
+});
+
+app.delete('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const ids = Array.isArray(req.body && req.body.ids)
+    ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
+  const del = db.prepare('DELETE FROM album_items WHERE album_id = ? AND media_id = ?');
+  const run = db.transaction((list) => {
+    let n = 0;
+    for (const mid of list) n += del.run(a.id, mid).changes;
+    return n;
+  });
+  res.json({ removed: run(ids) });
+});
+
+// Creează / rotește linkul de partajare
+app.post('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const token = crypto.randomBytes(24).toString('base64url');
+  db.prepare('UPDATE albums SET share_token = ?, share_created_at = ? WHERE id = ?')
+    .run(token, new Date().toISOString(), a.id);
+  res.json({ token, path: `/s/${token}` });
+});
+
+app.delete('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
+  res.json({ ok: true });
+});
+
+// ─── Partajare publică (fără login, doar citire) ────────────────────────────
+const shareLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.get('/api/s/:token', shareLimiter, (req, res) => {
+  const a = getSharedAlbum(req.params.token);
+  if (!a) return res.status(404).json({ error: 'link invalid' });
+  const items = mediaInAlbum(a.id);
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.json({ name: a.name, count: items.length, items });
+});
+
+function shareMediaGuard(req, res, next) {
+  const a = getSharedAlbum(req.params.token);
+  if (!a) return res.status(404).end();
+  if (!UUID_RE.test(String(req.params.id || ''))) return res.status(404).end();
+  const inAlbum = db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?')
+    .get(a.id, req.params.id);
+  if (!inAlbum) return res.status(404).end();
+  const row = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).end();
+  req.mediaRow = row;
+  next();
+}
+
+app.get('/s/:token/media/:id/thumb', shareLimiter, shareMediaGuard, (req, res) => sendThumb(req.mediaRow, res));
+app.get('/s/:token/media/:id/full', shareLimiter, shareMediaGuard, (req, res) => sendFull(req.mediaRow, res));
+
+app.get('/s/:token', shareLimiter, (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.set('Cache-Control', 'no-store');
+  if (!getSharedAlbum(req.params.token)) {
+    return res.status(404).sendFile(path.join(__dirname, 'public', 'share.html'));
+  }
+  res.sendFile(path.join(__dirname, 'public', 'share.html'));
 });
 
 // ─── Pagini + statice ───────────────────────────────────────────────────────

@@ -5,23 +5,64 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>Cloud — Galerie</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=2">
+  <link rel="stylesheet" href="/assets/styles.css?v=3">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">Cloud</div>
+    <nav class="nav">
+      <a href="#/" class="nav-link" data-view="all">Poze</a>
+      <a href="#/albums" class="nav-link" data-view="albums">Albume</a>
+    </nav>
     <div class="spacer"></div>
     <span id="count" class="muted count"></span>
+    <button id="selectBtn" class="btn">Selectează</button>
     <button id="uploadBtn" class="btn primary">Încarcă</button>
     <button id="logoutBtn" class="btn">Ieși</button>
     <input type="file" id="fileInput" accept="image/*,video/*" multiple hidden>
   </header>
 
-  <main id="gallery" class="gallery">
-    <div id="empty" class="empty" hidden>
+  <div id="selBar" class="sel-bar" hidden>
+    <button id="selCancel" class="icon-btn small" aria-label="Anulează">×</button>
+    <span id="selCount">0 selectate</span>
+    <div class="spacer"></div>
+    <button id="selAdd" class="btn">Adaugă în album</button>
+    <button id="selRemove" class="btn" hidden>Scoate din album</button>
+    <button id="selDelete" class="btn danger">Șterge</button>
+  </div>
+
+  <!-- Toate pozele -->
+  <main id="viewAll" class="view">
+    <div class="gallery" id="allGrid"></div>
+    <div id="allEmpty" class="empty" hidden>
       <p>Nicio poză sau clip încă.</p>
       <p class="muted">Trage fișiere oriunde pe pagină sau apasă „Încarcă”.</p>
     </div>
+  </main>
+
+  <!-- Lista de albume -->
+  <main id="viewAlbums" class="view" hidden>
+    <div class="section-head">
+      <h1>Albume</h1>
+      <button id="newAlbumBtn" class="btn primary">Album nou</button>
+    </div>
+    <div id="albumsGrid" class="albums-grid"></div>
+    <div id="albumsEmpty" class="empty" hidden><p>Niciun album încă.</p></div>
+  </main>
+
+  <!-- Un album -->
+  <main id="viewAlbum" class="view" hidden>
+    <div class="section-head album-head">
+      <button id="albumBack" class="btn ghost">‹ Albume</button>
+      <h1 id="albumTitle"></h1>
+      <div class="spacer"></div>
+      <button id="albumAdd" class="btn">Adaugă poze</button>
+      <button id="albumShare" class="btn">Partajează</button>
+      <button id="albumRename" class="btn ghost">Redenumește</button>
+      <button id="albumDelete" class="btn danger ghost">Șterge</button>
+    </div>
+    <div class="gallery" id="albumGrid"></div>
+    <div id="albumEmpty" class="empty" hidden><p>Album gol. Apasă „Adaugă poze”.</p></div>
   </main>
 
   <div id="dropOverlay" class="drop-overlay" hidden><div>Lasă fișierele aici</div></div>
@@ -34,14 +75,55 @@
     <ul id="uploadList"></ul>
   </section>
 
+  <!-- Alegere album pentru selecție -->
+  <div id="chooser" class="menu" hidden>
+    <div class="menu-title">Adaugă în album</div>
+    <div id="chooserList" class="menu-list"></div>
+    <button id="chooserNew" class="menu-item new">＋ Album nou…</button>
+  </div>
+
+  <!-- Modal partajare -->
+  <div id="shareModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Link de partajare</h2>
+      <p class="muted">Oricine are linkul poate vedea albumul, fără parolă.</p>
+      <div class="share-row">
+        <input id="shareUrl" type="text" readonly>
+        <button id="shareCopy" class="btn primary">Copiază</button>
+      </div>
+      <div class="modal-actions">
+        <button id="shareRevoke" class="btn danger ghost">Dezactivează linkul</button>
+        <button id="shareClose" class="btn">Închide</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal alegere poze (pt. „Adaugă poze” într-un album) -->
+  <div id="pickerModal" class="modal" hidden>
+    <div class="modal-card wide">
+      <div class="picker-head">
+        <h2>Alege poze</h2>
+        <span id="pickerCount" class="muted"></span>
+        <div class="spacer"></div>
+        <button id="pickerConfirm" class="btn primary">Adaugă</button>
+        <button id="pickerClose" class="btn">Anulează</button>
+      </div>
+      <div id="pickerGrid" class="gallery picker-grid"></div>
+    </div>
+  </div>
+
   <div id="lightbox" class="lightbox" hidden>
     <button class="icon-btn lb-close" data-act="close" aria-label="Închide">×</button>
+    <a id="lbDownload" class="icon-btn lb-dl" download aria-label="Descarcă">⭳</a>
     <button class="icon-btn lb-del" data-act="delete" aria-label="Șterge">🗑</button>
     <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior">‹</button>
     <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor">›</button>
     <div class="lb-stage" id="lbStage"></div>
+    <div class="lb-caption" id="lbCaption"></div>
   </div>
 
-  <script src="/assets/app.js?v=2"></script>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/assets/app.js?v=3"></script>
 </body>
 </html>

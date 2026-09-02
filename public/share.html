@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Album partajat — Cloud</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=3">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Cloud</div>
+    <div class="spacer"></div>
+    <span id="count" class="muted count"></span>
+  </header>
+
+  <main class="view">
+    <div class="section-head"><h1 id="albumTitle">Album partajat</h1></div>
+    <div class="gallery" id="grid"></div>
+    <div id="notfound" class="empty" hidden>
+      <p>Linkul nu este valid sau a fost dezactivat.</p>
+    </div>
+  </main>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <button class="icon-btn lb-close" data-act="close" aria-label="Închide">×</button>
+    <a id="lbDownload" class="icon-btn lb-dl" download aria-label="Descarcă">⭳</a>
+    <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior">‹</button>
+    <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor">›</button>
+    <div class="lb-stage" id="lbStage"></div>
+    <div class="lb-caption" id="lbCaption"></div>
+  </div>
+
+  <script src="/assets/share.js?v=3"></script>
+</body>
+</html>
