@@ -4,22 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#ffffff">
   <title>Cloud — Galerie</title>
+  <script src="/assets/theme-init.js"></script>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=5">
+  <link rel="stylesheet" href="/assets/styles.css?v=6">
 </head>
 <body>
   <div class="app">
     <aside id="side" class="side">
       <div class="side-top">
         <button id="menuClose" class="icon-btn2" aria-label="Meniu"><span class="msi">menu</span></button>
-        <span class="lockup"><span class="pw"></span>Photos</span>
+        <span class="lockup"><span class="mark"><span class="msi">cloud</span></span>Cloud</span>
       </div>
       <nav>
         <a class="side-link" href="#/" data-view="all"><span class="msi">image</span><span class="lbl">Poze</span></a>
+        <a class="side-link" href="#/highlights" data-view="highlights"><span class="msi">star</span><span class="lbl">Favorite</span></a>
         <a class="side-link" href="#/albums" data-view="albums"><span class="msi">photo_album</span><span class="lbl">Albume</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
+        <div class="side-sep"></div>
+        <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
+        <a class="side-link" href="#/trash" data-view="trash"><span class="msi">delete</span><span class="lbl">Coș</span></a>
       </nav>
       <div class="side-storage">
         <div class="storage-row"><span class="msi">cloud</span><span class="lbl">Stocare</span></div>
@@ -32,17 +38,24 @@
     <div class="main">
       <header class="topbar">
         <button id="menuBtn" class="icon-btn2 only-mobile" aria-label="Meniu"><span class="msi">menu</span></button>
-        <span class="lockup only-mobile"><span class="pw"></span>Photos</span>
+        <span class="lockup only-mobile"><span class="mark"><span class="msi">cloud</span></span>Cloud</span>
         <label class="search">
           <span class="msi search-ic" aria-hidden="true">search</span>
-          <input id="search" type="search" placeholder="Caută în poze" autocomplete="off">
+          <input id="search" type="search" placeholder="Caută după nume sau dată" autocomplete="off">
           <button id="searchClear" class="search-clear" hidden aria-label="Șterge căutarea"><span class="msi">close</span></button>
         </label>
         <div class="spacer"></div>
+        <button id="densityBtn" class="icon-btn2" aria-label="Densitate" title="Densitate grilă"><span class="msi">grid_view</span></button>
+        <button id="helpBtn" class="icon-btn2" aria-label="Scurtături" title="Scurtături de tastatură"><span class="msi">keyboard</span></button>
         <button id="uploadBtn" class="icon-btn2" aria-label="Încarcă" title="Încarcă"><span class="msi">upload</span></button>
         <div class="acct">
           <button id="acctBtn" class="avatar" aria-label="Cont">C</button>
           <div id="acctMenu" class="menu2" hidden>
+            <div class="menu2-label">Temă</div>
+            <button class="menu-item theme-opt" data-theme="light"><span class="msi">light_mode</span>Luminos</button>
+            <button class="menu-item theme-opt" data-theme="dark"><span class="msi">dark_mode</span>Întunecat</button>
+            <button class="menu-item theme-opt" data-theme="system"><span class="msi">brightness_auto</span>Sistem</button>
+            <div class="menu2-sep"></div>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
           </div>
         </div>
@@ -53,16 +66,23 @@
         <button id="selCancel" class="icon-btn2" aria-label="Anulează"><span class="msi">close</span></button>
         <span id="selCount">0</span><span class="sel-word">selectate</span>
         <div class="spacer"></div>
-        <button id="selAdd" class="icon-btn2" title="Adaugă în album" aria-label="Adaugă în album"><span class="msi">add</span></button>
-        <button id="selRemove" class="icon-btn2" title="Scoate din album" aria-label="Scoate din album" hidden><span class="msi">remove</span></button>
-        <button id="selDelete" class="icon-btn2" title="Șterge" aria-label="Șterge"><span class="msi">delete</span></button>
+        <div id="selActions" class="sel-actions"></div>
       </div>
 
-      <main id="viewAll" class="view">
-        <div id="allGrid" class="j-scroll"></div>
-        <div id="allEmpty" class="empty" hidden>
+      <main id="viewGrid" class="view">
+        <div class="section-head">
+          <h1 id="gridTitle">Poze</h1>
+          <div class="spacer"></div>
+          <button id="emptyTrashBtn" class="btn ghost danger" hidden><span class="msi">delete_forever</span>Golește coșul</button>
+        </div>
+        <div id="trashNote" class="banner" hidden>
+          <span class="msi">schedule</span> Elementele din coș se șterg definitiv după 30 de zile.
+        </div>
+        <div id="memStrip" class="mem-strip" hidden></div>
+        <div id="grid" class="j-scroll"></div>
+        <div id="gridEmpty" class="empty" hidden>
           <span class="msi big">photo_library</span>
-          <p>Nicio poză sau clip încă.</p>
+          <p id="gridEmptyText">Nicio poză încă.</p>
           <p class="muted">Trage fișiere oriunde pe pagină sau apasă pe ⬆.</p>
         </div>
       </main>
@@ -139,13 +159,34 @@
     </div>
   </div>
 
+  <div id="helpModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Scurtături</h2>
+      <div class="help-grid">
+        <kbd>↑ ↓ ← →</kbd><span>navighează în vizualizare</span>
+        <kbd>Esc</kbd><span>închide</span>
+        <kbd>i</kbd><span>informații</span>
+        <kbd>f</kbd><span>favorite</span>
+        <kbd>Space</kbd><span>slideshow pornit/oprit</span>
+        <kbd>Del</kbd><span>mută în coș</span>
+        <kbd>?</kbd><span>acest ecran</span>
+      </div>
+      <div class="modal-actions"><span></span><button id="helpClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
   <div id="lightbox" class="lightbox" hidden>
     <div class="lb-bar">
       <button class="icon-btn" data-act="close" aria-label="Înapoi"><span class="msi">arrow_back</span></button>
       <div class="spacer"></div>
+      <button class="icon-btn lb-slideshow" data-act="slideshow" aria-label="Slideshow"><span class="msi">play_arrow</span></button>
+      <button class="icon-btn lb-fav" data-act="fav" aria-label="Favorite"><span class="msi">star</span></button>
       <button class="icon-btn" data-act="info" aria-label="Informații"><span class="msi">info</span></button>
       <a id="lbDownload" class="icon-btn" download aria-label="Descarcă"><span class="msi">download</span></a>
-      <button class="icon-btn lb-del" data-act="delete" aria-label="Șterge"><span class="msi">delete</span></button>
+      <button class="icon-btn lb-archive" data-act="archive" aria-label="Arhivează"><span class="msi">inventory_2</span></button>
+      <button class="icon-btn lb-del" data-act="trash" aria-label="Mută în coș"><span class="msi">delete</span></button>
+      <button class="icon-btn lb-restore" data-act="restore" aria-label="Restaurează" hidden><span class="msi">restore_from_trash</span></button>
+      <button class="icon-btn lb-purge" data-act="purge" aria-label="Șterge definitiv" hidden><span class="msi">delete_forever</span></button>
     </div>
     <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior"><span class="msi">chevron_left</span></button>
     <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor"><span class="msi">chevron_right</span></button>
@@ -161,6 +202,6 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/assets/app.js?v=5"></script>
+  <script src="/assets/app.js?v=6"></script>
 </body>
 </html>

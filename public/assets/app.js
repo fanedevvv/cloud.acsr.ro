@@ -1,19 +1,34 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
+const FLAT = ['all', 'highlights', 'archive', 'trash'];
+const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș' };
+const EMPTY = {
+  all: 'Nicio poză încă.',
+  highlights: 'Nicio favorită. Apasă ⭐ pe o poză.',
+  archive: 'Arhiva e goală.',
+  trash: 'Coșul e gol.',
+};
+const DENSITY = { s: 132, m: 200, l: 284 };
 
 let csrf = '';
 let media = [];
+let archiveList = [];
+let trashList = [];
 let albums = [];
+let memories = [];
 let query = '';
+let density = 'm';
 let cur = { view: 'all', albumId: null, album: null, items: [] };
 
 const selected = new Set();
 let lbList = [];
 let lbIndex = -1;
+let slideTimer = null;
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
 (async function init() {
+  try { density = localStorage.getItem('density') || 'm'; } catch {}
   try {
     const r = await fetch('/api/csrf');
     if (r.status === 401) return location.replace('/login');
@@ -21,6 +36,9 @@ let lbIndex = -1;
   } catch {
     return location.replace('/login');
   }
+  markThemeMenu(currentThemeMode());
+  updateThemeColor();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateThemeColor);
   window.addEventListener('hashchange', route);
   wire();
   observeResize();
@@ -46,7 +64,13 @@ async function api(path, opts = {}) {
   return data;
 }
 
-async function loadAll() { media = await api('/api/media'); updateStorage(); }
+async function loadAll() {
+  media = await api('/api/media');
+  updateStorage();
+  try { memories = await api('/api/memories'); } catch { memories = []; }
+}
+async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
+async function loadTrash() { trashList = await api('/api/media?filter=trash'); }
 async function loadAlbums() { albums = await api('/api/albums'); }
 async function loadAlbum(id) {
   const d = await api('/api/albums/' + encodeURIComponent(id));
@@ -64,9 +88,34 @@ function updateStorage() {
   $('storageFill').style.width = Math.max(3, Math.min(100, (gb / 50) * 100)) + '%';
 }
 
+// ─── Temă ──────────────────────────────────────────────────────────────────
+function currentThemeMode() {
+  try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; }
+}
+function setTheme(mode) {
+  try {
+    if (mode === 'system') localStorage.removeItem('theme');
+    else localStorage.setItem('theme', mode);
+  } catch {}
+  if (mode === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  markThemeMenu(mode);
+  updateThemeColor();
+}
+function markThemeMenu(mode) {
+  document.querySelectorAll('.theme-opt').forEach((b) => b.classList.toggle('sel', b.dataset.theme === mode));
+}
+function updateThemeColor() {
+  const attr = document.documentElement.getAttribute('data-theme');
+  const dark = attr === 'dark' || (!attr && matchMedia('(prefers-color-scheme: dark)').matches);
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', dark ? '#131316' : '#ffffff');
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 function route() {
   clearSel();
+  stopSlideshow();
   const h = location.hash.replace(/^#/, '');
   const m = h.match(/^\/album\/([0-9a-f-]{36})$/i);
 
@@ -75,23 +124,27 @@ function route() {
     showView();
     loadAlbum(m[1]).then(renderAlbum).catch(() => { location.hash = '#/albums'; });
   } else if (h === '/albums') {
-    cur.view = 'albums'; cur.albumId = null;
+    cur.view = 'albums';
     showView();
     loadAlbums().then(renderAlbums);
   } else if (h === '/shares') {
-    cur.view = 'shares'; cur.albumId = null;
+    cur.view = 'shares';
     showView();
     loadAlbums().then(renderShares);
+  } else if (h === '/highlights') {
+    cur.view = 'highlights'; showView(); renderGrid();
+  } else if (h === '/archive') {
+    cur.view = 'archive'; showView(); loadArchive().then(renderGrid);
+  } else if (h === '/trash') {
+    cur.view = 'trash'; showView(); loadTrash().then(renderGrid);
   } else {
-    cur.view = 'all'; cur.albumId = null;
-    showView();
-    renderAll();
+    cur.view = 'all'; showView(); renderGrid();
   }
   updateNav();
 }
 
 function showView() {
-  $('viewAll').hidden = cur.view !== 'all';
+  $('viewGrid').hidden = !FLAT.includes(cur.view);
   $('viewAlbums').hidden = cur.view !== 'albums';
   $('viewShares').hidden = cur.view !== 'shares';
   $('viewAlbum').hidden = cur.view !== 'album';
@@ -100,15 +153,12 @@ function showView() {
 function updateNav() {
   document.querySelectorAll('.side-link').forEach((a) => {
     const v = a.dataset.view;
-    const on =
-      (v === 'all' && cur.view === 'all') ||
-      (v === 'albums' && (cur.view === 'albums' || cur.view === 'album')) ||
-      (v === 'shares' && cur.view === 'shares');
+    const on = v === cur.view || (v === 'albums' && cur.view === 'album');
     a.classList.toggle('active', on);
   });
 }
 
-// ─── Etichete de zi ────────────────────────────────────────────────────────
+// ─── Date labels ───────────────────────────────────────────────────────────
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
@@ -137,7 +187,10 @@ function groupByDay(list) {
 
 // ─── Layout justified ──────────────────────────────────────────────────────
 const GAP = 4;
-const targetRowH = () => (window.innerWidth < 700 ? 112 : 200);
+const targetRowH = () => {
+  const base = DENSITY[density] || 200;
+  return window.innerWidth < 700 ? Math.round(base * 0.58) : base;
+};
 const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
 
 function justify(items, width, th) {
@@ -232,29 +285,81 @@ function jtile(cell) {
   chk.addEventListener('click', (e) => { e.stopPropagation(); toggleSelect(it.id); });
   b.appendChild(chk);
 
+  if (cur.view !== 'trash') {
+    const fav = document.createElement('button');
+    fav.className = 'fav-btn' + (it.favorite ? ' on' : '');
+    fav.type = 'button';
+    fav.innerHTML = '<span class="msi">star</span>';
+    fav.title = 'Favorite';
+    fav.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(it, fav); });
+    b.appendChild(fav);
+  }
+
   b.addEventListener('click', () => {
     if (selected.size > 0) toggleSelect(it.id);
-    else openLightbox(currentList(), it.id, true);
+    else openLightbox(gridData(), it.id);
   });
   return b;
 }
 
-const currentList = () => (cur.view === 'album' ? cur.items : filteredMedia());
-
-function filteredMedia() {
-  if (!query) return media;
+function applySearch(list) {
+  if (!query) return list;
   const q = query.toLowerCase();
-  return media.filter((m) =>
+  return list.filter((m) =>
     (m.originalName || '').toLowerCase().includes(q) ||
+    (m.caption || '').toLowerCase().includes(q) ||
     dayLabel(m.takenAt || m.createdAt).toLowerCase().includes(q) ||
     (m.takenAt || m.createdAt).slice(0, 10).includes(q));
 }
 
-// ─── Randare vederi ────────────────────────────────────────────────────────
-function renderAll() {
-  const list = filteredMedia();
-  buildGallery($('allGrid'), list);
-  $('allEmpty').hidden = list.length > 0;
+function gridData() {
+  if (cur.view === 'highlights') return applySearch(media.filter((m) => m.favorite));
+  if (cur.view === 'archive') return applySearch(archiveList);
+  if (cur.view === 'trash') return applySearch(trashList);
+  if (cur.view === 'album') return cur.items;
+  return applySearch(media);
+}
+
+// ─── Randare ───────────────────────────────────────────────────────────────
+function renderGrid() {
+  const list = gridData();
+  $('gridTitle').textContent = TITLES[cur.view] || 'Poze';
+  $('emptyTrashBtn').hidden = cur.view !== 'trash' || trashList.length === 0;
+  $('trashNote').hidden = cur.view !== 'trash';
+  renderMemories();
+  buildGallery($('grid'), list);
+  $('gridEmpty').hidden = list.length > 0;
+  $('gridEmptyText').textContent = EMPTY[cur.view] || 'Gol.';
+}
+
+function renderMemories() {
+  const strip = $('memStrip');
+  const show = cur.view === 'all' && !query && memories.length > 0;
+  strip.hidden = !show;
+  if (!show) return;
+  strip.textContent = '';
+  const byYear = new Map();
+  for (const it of memories) {
+    const y = new Date(it.takenAt || it.createdAt).getFullYear();
+    if (!byYear.has(y)) byYear.set(y, it);
+  }
+  const now = new Date().getFullYear();
+  for (const [y, it] of byYear) {
+    const c = document.createElement('button');
+    c.className = 'mem-card';
+    c.type = 'button';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = '/media/' + it.id + '/thumb';
+    const capEl = document.createElement('span');
+    capEl.className = 'mem-cap';
+    const n = now - y;
+    capEl.textContent = n === 1 ? 'Acum un an' : 'Acum ' + n + ' ani';
+    c.appendChild(img);
+    c.appendChild(capEl);
+    c.onclick = () => openLightbox(memories, it.id);
+    strip.appendChild(c);
+  }
 }
 
 function renderAlbum() {
@@ -270,7 +375,6 @@ function albumCard(a) {
   const card = document.createElement('a');
   card.className = 'album-card';
   card.href = '#/album/' + a.id;
-
   const cover = document.createElement('div');
   cover.className = 'album-cover';
   if (a.coverId) {
@@ -282,7 +386,6 @@ function albumCard(a) {
     cover.classList.add('empty');
     cover.textContent = '🗀';
   }
-
   const meta = document.createElement('div');
   meta.className = 'album-meta';
   const nm = document.createElement('div');
@@ -293,7 +396,6 @@ function albumCard(a) {
   sub.textContent = a.count + (a.count === 1 ? ' element' : ' elemente') + (a.shareToken ? ' · partajat' : '');
   meta.appendChild(nm);
   meta.appendChild(sub);
-
   card.appendChild(cover);
   card.appendChild(meta);
   return card;
@@ -315,7 +417,7 @@ function renderShares() {
 }
 
 function rerender() {
-  if (cur.view === 'all') renderAll();
+  if (FLAT.includes(cur.view)) renderGrid();
   else if (cur.view === 'album') renderAlbum();
   else if (cur.view === 'albums') renderAlbums();
   else if (cur.view === 'shares') renderShares();
@@ -326,12 +428,28 @@ function observeResize() {
   const ro = new ResizeObserver(() => {
     clearTimeout(t);
     t = setTimeout(() => {
-      for (const c of [$('allGrid'), $('albumGrid')]) {
+      for (const c of [$('grid'), $('albumGrid')]) {
         if (c && c._list && !c.closest('.view').hidden) buildGallery(c, c._list);
       }
     }, 120);
   });
   ro.observe(document.querySelector('.main'));
+}
+
+// ─── Favorite ──────────────────────────────────────────────────────────────
+async function toggleFav(it, btn) {
+  it.favorite = !it.favorite;
+  if (btn) btn.classList.toggle('on', it.favorite);
+  try {
+    await api('/api/media/' + it.id, { method: 'PATCH', body: { favorite: it.favorite } });
+  } catch (e) {
+    it.favorite = !it.favorite;
+    if (btn) btn.classList.toggle('on', it.favorite);
+    return toast(e.message);
+  }
+  const local = media.find((m) => m.id === it.id);
+  if (local) local.favorite = it.favorite;
+  if (cur.view === 'highlights') renderGrid();
 }
 
 // ─── Selecție ──────────────────────────────────────────────────────────────
@@ -344,7 +462,6 @@ function toggleSelect(id) {
   syncDayChecks();
   updateSelBar();
 }
-
 function syncDayChecks() {
   document.querySelectorAll('.j-day').forEach((day) => {
     const ids = [...day.querySelectorAll('.j-tile')].map((el) => el.dataset.id);
@@ -352,7 +469,6 @@ function syncDayChecks() {
     if (chk) chk.classList.toggle('on', ids.length > 0 && ids.every((id) => selected.has(id)));
   });
 }
-
 function clearSel() {
   if (!selected.size) { updateSelBar(); return; }
   selected.clear();
@@ -360,13 +476,74 @@ function clearSel() {
   document.querySelectorAll('.daychk.on').forEach((el) => el.classList.remove('on'));
   updateSelBar();
 }
-
 function updateSelBar() {
   const n = selected.size;
   $('selBar').hidden = n === 0;
   document.body.classList.toggle('selecting', n > 0);
   $('selCount').textContent = n;
-  $('selRemove').hidden = cur.view !== 'album';
+  if (n > 0) renderSelActions();
+}
+
+function selBtn(icon, title, fn) {
+  const b = document.createElement('button');
+  b.className = 'icon-btn2';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.innerHTML = '<span class="msi">' + icon + '</span>';
+  b.onclick = fn;
+  return b;
+}
+
+function renderSelActions() {
+  const box = $('selActions');
+  box.textContent = '';
+  const ids = () => [...selected];
+  if (cur.view === 'trash') {
+    box.appendChild(selBtn('restore_from_trash', 'Restaurează', () => bulk((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat')));
+    box.appendChild(selBtn('delete_forever', 'Șterge definitiv', () => {
+      if (!confirm('Ștergi definitiv ' + selected.size + ' elemente?')) return;
+      bulk((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv');
+    }));
+    return;
+  }
+  if (cur.view === 'archive') {
+    box.appendChild(selBtn('unarchive', 'Scoate din arhivă', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }), 'Scos din arhivă')));
+  } else {
+    box.appendChild(selBtn('add', 'Adaugă în album', (e) => {
+      if (!selected.size) return;
+      openChooser(e.currentTarget);
+    }));
+    box.appendChild(selBtn('star', 'Marchează favorite', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: true } }), 'Adăugat la favorite')));
+    box.appendChild(selBtn('inventory_2', 'Arhivează', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat')));
+  }
+  if (cur.view === 'album') {
+    box.appendChild(selBtn('remove', 'Scoate din album', async () => {
+      try {
+        await api('/api/albums/' + cur.albumId + '/items', { method: 'DELETE', body: { ids: ids() } });
+        toast('Scos din album');
+        await loadAlbum(cur.albumId);
+        await loadAlbums();
+        clearSel();
+        renderAlbum();
+      } catch (e) { toast(e.message); }
+    }));
+  }
+  box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+}
+
+async function bulk(fn, okMsg) {
+  const ids = [...selected];
+  for (const id of ids) {
+    try { await fn(id); } catch { /* continuă */ }
+  }
+  toast(okMsg);
+  await loadAll();
+  await loadAlbums();
+  if (cur.view === 'archive') await loadArchive();
+  if (cur.view === 'trash') await loadTrash();
+  if (cur.view === 'album') await loadAlbum(cur.albumId);
+  clearSel();
+  rerender();
 }
 
 // ─── Chooser ───────────────────────────────────────────────────────────────
@@ -398,7 +575,6 @@ function closeChooser() {
   $('chooser').hidden = true;
   document.removeEventListener('click', outsideChooser);
 }
-
 async function addToAlbum(albumId, ids) {
   try {
     const d = await api('/api/albums/' + albumId + '/items', { method: 'POST', body: { ids } });
@@ -410,8 +586,6 @@ async function addToAlbum(albumId, ids) {
 }
 
 // ─── Partajare ─────────────────────────────────────────────────────────────
-const shareLink = (token) => location.origin + '/s/' + token;
-
 async function openShare() {
   let token = cur.album && cur.album.shareToken;
   if (!token) {
@@ -422,7 +596,7 @@ async function openShare() {
       await loadAlbums();
     } catch (e) { return toast(e.message); }
   }
-  $('shareUrl').value = shareLink(token);
+  $('shareUrl').value = location.origin + '/s/' + token;
   $('shareModal').hidden = false;
 }
 
@@ -434,7 +608,6 @@ function openPicker() {
   const avail = media.filter((x) => !inAlbum.has(x.id));
   const grid = $('pickerGrid');
   grid.textContent = '';
-
   if (!avail.length) {
     const p = document.createElement('p');
     p.className = 'picker-empty muted';
@@ -466,7 +639,6 @@ function openPicker() {
 // ─── Lightbox ──────────────────────────────────────────────────────────────
 const lb = $('lightbox');
 const lbStage = $('lbStage');
-const lbDelBtn = lb.querySelector('.lb-del');
 const lbDl = $('lbDownload');
 const lbStrip = $('lbStrip');
 
@@ -476,11 +648,10 @@ function sizeStr(n) {
   return (n / 1024 / 1024).toFixed(1) + ' MB';
 }
 
-function openLightbox(list, id, canDelete) {
+function openLightbox(list, id) {
   lbList = list;
   lbIndex = list.findIndex((x) => x.id === id);
   if (lbIndex < 0) return;
-  lbDelBtn.hidden = !canDelete;
   lb.hidden = false;
   document.body.classList.add('no-scroll');
   renderStrip();
@@ -488,6 +659,7 @@ function openLightbox(list, id, canDelete) {
 }
 
 function closeLightbox() {
+  stopSlideshow();
   lb.hidden = true;
   lb.classList.remove('has-info');
   $('lbInfo').hidden = true;
@@ -512,6 +684,15 @@ function showLb() {
   }
   lbDl.href = '/media/' + it.id + '/full';
   lbDl.setAttribute('download', it.originalName || it.id);
+
+  const trash = cur.view === 'trash';
+  lb.querySelector('.lb-fav').hidden = trash;
+  lb.querySelector('.lb-archive').hidden = trash;
+  lb.querySelector('.lb-del').hidden = trash;
+  lb.querySelector('.lb-slideshow').hidden = trash;
+  lb.querySelector('.lb-restore').hidden = !trash;
+  lb.querySelector('.lb-purge').hidden = !trash;
+  lb.querySelector('.lb-fav').classList.toggle('on', !!it.favorite);
 
   lbStrip.querySelectorAll('.strip-thumb').forEach((el, i) => {
     el.classList.toggle('cur', i === lbIndex);
@@ -550,11 +731,24 @@ function renderInfo() {
   body.appendChild(date);
   body.appendChild(time);
 
+  const ta = document.createElement('textarea');
+  ta.placeholder = 'Adaugă o descriere…';
+  ta.value = it.caption || '';
+  ta.addEventListener('change', async () => {
+    it.caption = ta.value;
+    try { await api('/api/media/' + it.id, { method: 'PATCH', body: { caption: ta.value } }); }
+    catch (e) { toast(e.message); }
+    const local = media.find((m) => m.id === it.id);
+    if (local) local.caption = ta.value;
+  });
+  body.appendChild(ta);
+
   const rows = [];
   if (it.originalName) rows.push(['image', it.originalName]);
-  if (it.width && it.height) rows.push(['straighten', `${it.width} × ${it.height}  ·  ${(it.width * it.height / 1e6).toFixed(1)} MP`]);
+  if (it.width && it.height) rows.push(['straighten', it.width + ' × ' + it.height + '  ·  ' + (it.width * it.height / 1e6).toFixed(1) + ' MP']);
   if (it.size) rows.push(['sd_card', sizeStr(it.size)]);
   rows.push([it.type === 'video' ? 'movie' : 'photo_camera', it.type === 'video' ? 'Videoclip' : 'Fotografie']);
+  if (it.favorite) rows.push(['star', 'La favorite']);
   for (const [ic, txt] of rows) {
     const row = document.createElement('div');
     row.className = 'info-row';
@@ -582,21 +776,45 @@ function stepLb(d) {
   showLb();
 }
 
-async function deleteCurrentLb() {
+async function lbFav() {
   const it = lbList[lbIndex];
-  if (!it || !confirm('Ștergi definitiv acest fișier?')) return;
-  try {
-    await api('/api/media/' + it.id, { method: 'DELETE' });
-  } catch (e) { return toast(e.message); }
+  if (!it) return;
+  await toggleFav(it, null);
+  lb.querySelector('.lb-fav').classList.toggle('on', !!it.favorite);
+  if (!$('lbInfo').hidden) renderInfo();
+}
+
+async function lbMutate(fn, msg, removeFromList) {
+  const it = lbList[lbIndex];
+  if (!it) return;
+  try { await fn(it.id); } catch (e) { return toast(e.message); }
+  toast(msg);
   await loadAll();
   await loadAlbums();
+  if (cur.view === 'archive') await loadArchive();
+  if (cur.view === 'trash') await loadTrash();
   if (cur.view === 'album') { await loadAlbum(cur.albumId); lbList = cur.items; }
-  else lbList = filteredMedia();
+  else if (removeFromList) { lbList.splice(lbIndex, 1); }
   rerender();
   if (!lbList.length) return closeLightbox();
   lbIndex = Math.min(lbIndex, lbList.length - 1);
   renderStrip();
   showLb();
+}
+
+// ─── Slideshow ─────────────────────────────────────────────────────────────
+function toggleSlideshow() {
+  if (slideTimer) return stopSlideshow();
+  slideTimer = setInterval(() => stepLb(1), 3500);
+  const i = lb.querySelector('.lb-slideshow .msi');
+  if (i) i.textContent = 'pause';
+}
+function stopSlideshow() {
+  if (!slideTimer) return;
+  clearInterval(slideTimer);
+  slideTimer = null;
+  const i = lb.querySelector('.lb-slideshow .msi');
+  if (i) i.textContent = 'play_arrow';
 }
 
 // ─── Upload ────────────────────────────────────────────────────────────────
@@ -621,7 +839,7 @@ async function uploadFiles(files) {
 
   let ok = 0;
   for (let i = 0; i < files.length; i++) {
-    $('uploadTitle').textContent = `Se încarcă ${i + 1}/${files.length}…`;
+    $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
     try {
       await uploadOne(files[i], rows[i].fill);
       rows[i].li.classList.add('ok');
@@ -632,7 +850,7 @@ async function uploadFiles(files) {
       rows[i].li.title = e && e.message ? e.message : 'eșuat';
     }
   }
-  $('uploadTitle').textContent = `Gata — ${ok}/${files.length} încărcate`;
+  $('uploadTitle').textContent = 'Gata — ' + ok + '/' + files.length + ' încărcate';
   await loadAll();
   await loadAlbums();
   rerender();
@@ -685,19 +903,30 @@ function wire() {
 
   $('acctBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = !$('acctMenu').hidden; };
   document.addEventListener('click', () => { $('acctMenu').hidden = true; });
+  document.querySelectorAll('.theme-opt').forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setTheme(b.dataset.theme); };
+  });
   $('logoutBtn').onclick = async () => {
     try { await fetch('/api/logout', { method: 'POST', headers: { 'x-csrf-token': csrf } }); } catch {}
     location.replace('/login');
   };
 
+  $('densityBtn').onclick = () => {
+    density = density === 'm' ? 'l' : density === 'l' ? 's' : 'm';
+    try { localStorage.setItem('density', density); } catch {}
+    rerender();
+  };
+  $('helpBtn').onclick = () => { $('helpModal').hidden = false; };
+  $('helpClose').onclick = () => { $('helpModal').hidden = true; };
+
   $('search').addEventListener('input', (e) => {
     query = e.target.value.trim();
     $('searchClear').hidden = !query;
-    if (cur.view === 'all') renderAll();
+    if (FLAT.includes(cur.view)) renderGrid();
   });
   $('searchClear').onclick = () => {
     $('search').value = ''; query = ''; $('searchClear').hidden = true;
-    if (cur.view === 'all') renderAll();
+    if (FLAT.includes(cur.view)) renderGrid();
   };
 
   const fileInput = $('fileInput');
@@ -708,11 +937,19 @@ function wire() {
   });
   $('uploadClose').onclick = () => { $('uploadTray').hidden = true; $('uploadList').textContent = ''; };
 
-  $('selCancel').onclick = clearSel;
-  $('selAdd').onclick = (e) => {
-    if (!selected.size) return toast('Nimic selectat');
-    openChooser(e.currentTarget);
+  $('emptyTrashBtn').onclick = async () => {
+    if (!confirm('Golești coșul? Toate elementele se șterg definitiv.')) return;
+    try {
+      await api('/api/trash/empty', { method: 'POST' });
+      await loadTrash();
+      await loadAll();
+      renderGrid();
+      toast('Coș golit');
+    } catch (e) { toast(e.message); }
   };
+
+  $('selCancel').onclick = clearSel;
+
   $('chooserNew').onclick = async () => {
     const name = prompt('Nume album nou');
     if (!name || !name.trim()) return;
@@ -721,30 +958,6 @@ function wire() {
       await addToAlbum(a.id, [...selected]);
       closeChooser();
     } catch (e) { toast(e.message); }
-  };
-  $('selRemove').onclick = async () => {
-    if (!selected.size || cur.view !== 'album') return;
-    try {
-      await api('/api/albums/' + cur.albumId + '/items', { method: 'DELETE', body: { ids: [...selected] } });
-      toast('Scos din album');
-      await loadAlbum(cur.albumId);
-      await loadAlbums();
-      clearSel();
-      renderAlbum();
-    } catch (e) { toast(e.message); }
-  };
-  $('selDelete').onclick = async () => {
-    if (!selected.size) return;
-    if (!confirm(`Ștergi definitiv ${selected.size} fișiere?`)) return;
-    for (const id of [...selected]) {
-      try { await api('/api/media/' + id, { method: 'DELETE' }); } catch { /* continuă */ }
-    }
-    toast('Șters');
-    await loadAll();
-    await loadAlbums();
-    if (cur.view === 'album') await loadAlbum(cur.albumId);
-    clearSel();
-    rerender();
   };
 
   $('newAlbumBtn').onclick = async () => {
@@ -781,10 +994,8 @@ function wire() {
 
   $('shareCopy').onclick = async () => {
     const v = $('shareUrl').value;
-    try {
-      await navigator.clipboard.writeText(v);
-      toast('Link copiat');
-    } catch {
+    try { await navigator.clipboard.writeText(v); toast('Link copiat'); }
+    catch {
       $('shareUrl').select();
       try { document.execCommand('copy'); toast('Link copiat'); } catch { toast('Copiază manual'); }
     }
@@ -818,20 +1029,34 @@ function wire() {
     const btn = e.target.closest('[data-act]');
     const act = btn && btn.dataset.act;
     if (act === 'close') closeLightbox();
-    else if (act === 'prev') stepLb(-1);
-    else if (act === 'next') stepLb(1);
-    else if (act === 'delete') deleteCurrentLb();
+    else if (act === 'prev') { stopSlideshow(); stepLb(-1); }
+    else if (act === 'next') { stopSlideshow(); stepLb(1); }
     else if (act === 'info') toggleInfo();
-    else if (e.target === lb || e.target === lbStage) closeLightbox();
+    else if (act === 'fav') lbFav();
+    else if (act === 'slideshow') toggleSlideshow();
+    else if (act === 'archive') lbMutate((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', true);
+    else if (act === 'trash') lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
+    else if (act === 'restore') lbMutate((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', true);
+    else if (act === 'purge') {
+      if (confirm('Ștergi definitiv acest fișier?')) lbMutate((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv', true);
+    } else if (e.target === lb || e.target === lbStage) closeLightbox();
   });
+
   document.addEventListener('keydown', (e) => {
+    if (!$('helpModal').hidden && e.key === 'Escape') { $('helpModal').hidden = true; return; }
     if (!lb.hidden) {
       if (e.key === 'Escape') closeLightbox();
-      else if (e.key === 'ArrowLeft') stepLb(-1);
-      else if (e.key === 'ArrowRight') stepLb(1);
+      else if (e.key === 'ArrowLeft') { stopSlideshow(); stepLb(-1); }
+      else if (e.key === 'ArrowRight') { stopSlideshow(); stepLb(1); }
       else if (e.key === 'i') toggleInfo();
+      else if (e.key === 'f' && cur.view !== 'trash') lbFav();
+      else if (e.key === ' ') { e.preventDefault(); toggleSlideshow(); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && cur.view !== 'trash') {
+        lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
+      }
       return;
     }
+    if (e.key === '?') { $('helpModal').hidden = false; return; }
     if (e.key === 'Escape') {
       if (!$('shareModal').hidden) $('shareModal').hidden = true;
       else if (!$('pickerModal').hidden) $('pickerModal').hidden = true;

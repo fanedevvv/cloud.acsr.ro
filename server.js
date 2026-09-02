@@ -129,23 +129,34 @@ const jsonBody = express.json({ limit: '256kb' });
 
 const MEDIA_COLS = `
   id, type, mime, original_name AS originalName, width, height, size,
-  duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt
+  duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt,
+  favorite, archived, caption, deleted_at AS deletedAt
 `;
+
+const mapRow = (r) => ({
+  ...r,
+  hasThumb: !!r.hasThumb,
+  favorite: !!r.favorite,
+  archived: !!r.archived,
+});
 
 function mediaInAlbum(albumId) {
   return db.prepare(`
     SELECT ${MEDIA_COLS} FROM media m
     JOIN album_items ai ON ai.media_id = m.id
-    WHERE ai.album_id = ?
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
-  `).all(albumId).map((r) => ({ ...r, hasThumb: !!r.hasThumb }));
+  `).all(albumId).map(mapRow);
 }
 
 function albumSummary(a) {
-  const count = db.prepare('SELECT COUNT(*) n FROM album_items WHERE album_id = ?').get(a.id).n;
+  const count = db.prepare(`
+    SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+  `).get(a.id).n;
   const cover = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ?
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
   return {
@@ -156,6 +167,19 @@ function albumSummary(a) {
     coverId: cover ? cover.id : null,
     shareToken: a.share_token || null,
   };
+}
+
+// Golește definitiv coșul: elemente șterse de peste TRASH_DAYS zile.
+const TRASH_DAYS = 30;
+function purgeTrash() {
+  const cutoff = new Date(Date.now() - TRASH_DAYS * 86400000).toISOString();
+  const rows = db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL AND deleted_at < ?').all(cutoff);
+  for (const r of rows) {
+    fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
+    fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
+    db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
+  }
+  if (rows.length) console.log(`coș: șterse definitiv ${rows.length} elemente`);
 }
 
 function sendThumb(row, res) {
@@ -225,13 +249,69 @@ app.get('/api/csrf', requireAuth, (req, res) => {
 
 // ─── Listă media ────────────────────────────────────────────────────────────
 app.get('/api/media', requireAuth, (req, res) => {
+  const f = String(req.query.filter || 'all');
+  let where;
+  let order = 'ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC';
+  if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND favorite = 1';
+  else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1';
+  else if (f === 'trash') { where = 'deleted_at IS NOT NULL'; order = 'ORDER BY deleted_at DESC'; }
+  else where = 'deleted_at IS NULL AND archived = 0';
+
+  const rows = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
+  res.json(rows.map(mapRow));
+});
+
+// „Amintiri” — poze din aceeași zi calendaristică, din anii trecuți
+app.get('/api/memories', requireAuth, (req, res) => {
+  const now = new Date();
+  const md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   const rows = db.prepare(`
-    SELECT id, type, mime, original_name AS originalName, width, height, size,
-           duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt
-    FROM media
-    ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC
-  `).all();
-  res.json(rows.map((r) => ({ ...r, hasThumb: !!r.hasThumb })));
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE deleted_at IS NULL AND archived = 0
+      AND strftime('%m-%d', COALESCE(taken_at, created_at)) = ?
+      AND CAST(strftime('%Y', COALESCE(taken_at, created_at)) AS INTEGER) < ?
+    ORDER BY COALESCE(taken_at, created_at) DESC
+  `).all(md, now.getFullYear()).map(mapRow);
+  res.json(rows);
+});
+
+// Actualizează favorite / arhivat / descriere
+app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  const b = req.body || {};
+  const sets = [];
+  const vals = { id: row.id };
+  if ('favorite' in b) { sets.push('favorite = @favorite'); vals.favorite = b.favorite ? 1 : 0; }
+  if ('archived' in b) { sets.push('archived = @archived'); vals.archived = b.archived ? 1 : 0; }
+  if ('caption' in b) { sets.push('caption = @caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
+  if (sets.length) db.prepare(`UPDATE media SET ${sets.join(', ')} WHERE id = @id`).run(vals);
+  res.json({ ok: true });
+});
+
+// Mută în coș (soft delete) / restaurează
+app.post('/api/media/:id/trash', requireAuth, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE media SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/media/:id/restore', requireAuth, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/trash/empty', requireAuth, checkCsrf, (req, res) => {
+  const rows = db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL').all();
+  for (const r of rows) {
+    fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
+    fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
+    db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
+  }
+  res.json({ ok: true, deleted: rows.length });
 });
 
 // ─── Upload ─────────────────────────────────────────────────────────────────
@@ -392,7 +472,7 @@ function shareMediaGuard(req, res, next) {
     .get(a.id, req.params.id);
   if (!inAlbum) return res.status(404).end();
   const row = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).end();
+  if (!row || row.deleted_at) return res.status(404).end();
   req.mediaRow = row;
   next();
 }
@@ -438,6 +518,9 @@ app.use((err, req, res, next) => {
   console.error(err);
   if (!res.headersSent) res.status(500).json({ error: 'eroare server' });
 });
+
+purgeTrash();
+setInterval(purgeTrash, 6 * 60 * 60 * 1000).unref();
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
