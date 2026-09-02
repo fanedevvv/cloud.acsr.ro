@@ -26,6 +26,8 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
+const { backfillHashes } = require('./lib/media');
+const takeout = require('./lib/takeout');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PASSWORD_HASH = process.env.PASSWORD_HASH || '';
@@ -421,6 +423,22 @@ app.post('/api/upload', requireAuth, checkCsrf, upload.array('files', 50), async
   }
 });
 
+// ─── Import Google Photos Takeout (.zip) ────────────────────────────────────
+const importUpload = multer({ dest: TMP_DIR, limits: { fileSize: 60 * 1024 * 1024 * 1024, files: 1 } });
+
+app.post('/api/import/takeout', requireAuth, checkCsrf, importUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'lipsește fișierul' });
+  const job = takeout.newJob();
+  takeout.runImport(req.file.path, job).catch((e) => console.error('import:', e));
+  res.json({ jobId: job.id });
+});
+
+app.get('/api/import/status/:id', requireAuth, (req, res) => {
+  const job = takeout.jobs.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(job);
+});
+
 // ─── Servire fișiere (doar autentificat) ────────────────────────────────────
 app.get('/media/:id/thumb', requireAuth, (req, res) => {
   const row = getRow(req.params.id);
@@ -694,4 +712,5 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
   // în fundal: generează postere pentru clipurile fără thumbnail
   Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
+  Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
 });

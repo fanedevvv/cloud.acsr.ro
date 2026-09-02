@@ -521,3 +521,11 @@ body.selecting .chk { opacity: 1; }
 .lb-stage.zoomed { cursor: grab; }
 .lb-stage.zoomed.grabbing { cursor: grabbing; }
 .lb-stage.zoomed img { transition: none; }
+
+
+/* IMPORT v13 */
+#importModal input[type=file] { display: block; width: 100%; margin: 8px 0 4px; font-size: 13px; }
+.import-prog { margin: 12px 0 4px; }
+.import-prog .bar { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.import-prog .fill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.import-prog #importStat { margin-top: 8px; font-size: 13px; }

@@ -1351,4 +1351,70 @@ function wire() {
   };
 
   initLightboxZoom();
+
+  // ─── Import Google Takeout ───────────────────────────────────────────────
+  let importTimer = null;
+  const stopPoll = () => { if (importTimer) { clearInterval(importTimer); importTimer = null; } };
+  $('importBtn').onclick = (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    $('importProgress').hidden = true;
+    $('importFile').value = '';
+    $('importStart').disabled = false;
+    $('importModal').hidden = false;
+  };
+  $('importClose').onclick = () => { stopPoll(); $('importModal').hidden = true; };
+  $('importStart').onclick = () => {
+    const file = $('importFile').files[0];
+    if (!file) return toast('Alege un fișier .zip');
+    $('importStart').disabled = true;
+    $('importProgress').hidden = false;
+    $('importBar').style.width = '0%';
+    $('importStat').textContent = 'Se încarcă arhiva…';
+
+    const fd = new FormData();
+    fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/import/takeout');
+    xhr.setRequestHeader('x-csrf-token', csrf);
+    xhr.upload.addEventListener('progress', (ev) => {
+      if (ev.lengthComputable) $('importBar').style.width = (ev.loaded / ev.total * 40).toFixed(1) + '%';
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status === 401) return location.replace('/login');
+      let jobId;
+      try { jobId = JSON.parse(xhr.responseText).jobId; } catch {}
+      if (!jobId) { $('importStat').textContent = 'Eroare la pornirea importului'; $('importStart').disabled = false; return; }
+      pollImport(jobId);
+    });
+    xhr.addEventListener('error', () => { $('importStat').textContent = 'Eroare de rețea'; $('importStart').disabled = false; });
+    xhr.send(fd);
+  };
+
+  function pollImport(jobId) {
+    stopPoll();
+    importTimer = setInterval(async () => {
+      let j;
+      try { j = await api('/api/import/status/' + jobId); } catch { return; }
+      const PH = { starting: 'Se pregătește…', reading: 'Se citește arhiva…', importing: 'Se importă', albums: 'Se refac albumele…', done: 'Gata', error: 'Eroare' };
+      const pct = j.total ? 40 + (j.done / j.total) * 60 : (j.phase === 'done' ? 100 : 45);
+      $('importBar').style.width = Math.min(100, pct).toFixed(1) + '%';
+      const bits = [PH[j.phase] || j.phase];
+      if (j.total) bits.push(j.done + '/' + j.total);
+      if (j.added) bits.push('+' + j.added);
+      if (j.duplicates) bits.push(j.duplicates + ' dubluri');
+      if (j.albums) bits.push(j.albums + ' albume');
+      $('importStat').textContent = bits.join('  ·  ');
+      if (j.phase === 'done' || j.phase === 'error') {
+        stopPoll();
+        $('importStart').disabled = false;
+        toast(j.phase === 'done'
+          ? ('Import gata: +' + j.added + (j.duplicates ? ', ' + j.duplicates + ' dubluri' : '') + (j.albums ? ', ' + j.albums + ' albume' : ''))
+          : 'Import cu erori');
+        await loadAll(); await loadAlbums();
+        if (cur.view === 'album') await loadAlbum(cur.albumId);
+        rerender();
+      }
+    }, 1500);
+  }
 }
