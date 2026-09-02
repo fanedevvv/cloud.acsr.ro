@@ -1,0 +1,26 @@
+{
+  "name": "cloud-acsr-ro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Galerie privată de poze și clipuri (self-hosted, ca Google Photos)",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node server.js",
+    "set-password": "node tools/set-password.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "better-sqlite3-session-store": "^0.1.0",
+    "exif-reader": "^2.0.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.0",
+    "express-session": "^1.18.1",
+    "helmet": "^8.0.0",
+    "multer": "^2.0.0",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Cloud — Galerie</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Cloud</div>
+    <div class="spacer"></div>
+    <span id="count" class="muted count"></span>
+    <button id="uploadBtn" class="btn primary">Încarcă</button>
+    <button id="logoutBtn" class="btn">Ieși</button>
+    <input type="file" id="fileInput" accept="image/*,video/*" multiple hidden>
+  </header>
+
+  <main id="gallery" class="gallery">
+    <div id="empty" class="empty" hidden>
+      <p>Nicio poză sau clip încă.</p>
+      <p class="muted">Trage fișiere oriunde pe pagină sau apasă „Încarcă”.</p>
+    </div>
+  </main>
+
+  <div id="dropOverlay" class="drop-overlay" hidden><div>Lasă fișierele aici</div></div>
+
+  <section id="uploadTray" class="upload-tray" hidden aria-live="polite">
+    <div class="upload-tray-head">
+      <span id="uploadTitle">Se încarcă…</span>
+      <button id="uploadClose" class="icon-btn small" aria-label="Închide">×</button>
+    </div>
+    <ul id="uploadList"></ul>
+  </section>
+
+  <div id="lightbox" class="lightbox" hidden>
+    <button class="icon-btn lb-close" data-act="close" aria-label="Închide">×</button>
+    <button class="icon-btn lb-del" data-act="delete" aria-label="Șterge">🗑</button>
+    <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior">‹</button>
+    <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor">›</button>
+    <div class="lb-stage" id="lbStage"></div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
