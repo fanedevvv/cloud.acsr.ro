@@ -1120,6 +1120,8 @@ function toast(msg) {
   toastT = setTimeout(() => { t.hidden = true; }, 2600);
 }
 
+window.__cloudUpload = (files) => uploadFiles([...files]);
+
 // ─── Wiring ────────────────────────────────────────────────────────────────
 function wire() {
   const openSide = () => { $('side').classList.add('open'); $('sideScrim').hidden = false; };

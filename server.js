@@ -651,6 +651,23 @@ app.get('/', requireAuthPage, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+app.get('/sw.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript; charset=utf-8');
+  res.set('Service-Worker-Allowed', '/');
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+});
+
+app.get('/manifest.webmanifest', (req, res) => {
+  res.set('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest'));
+});
+
+// Fallback dacă service worker-ul nu a preluat încă share-ul (PWA neinstalat)
+app.post('/share-target', (req, res) => res.redirect('/'));
+app.get('/share-target', (req, res) => res.redirect('/'));
+
 app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), {
   index: false,
   dotfiles: 'ignore',
