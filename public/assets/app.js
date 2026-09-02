@@ -26,7 +26,7 @@ let lbIndex = -1;
   observeResize();
   try {
     await Promise.all([loadAll(), loadAlbums()]);
-  } catch { /* api() a redirecționat deja la 401 */ }
+  } catch { /* api() a redirecționat la 401 */ }
   route();
 })();
 
@@ -46,12 +46,22 @@ async function api(path, opts = {}) {
   return data;
 }
 
-async function loadAll() { media = await api('/api/media'); }
+async function loadAll() { media = await api('/api/media'); updateStorage(); }
 async function loadAlbums() { albums = await api('/api/albums'); }
 async function loadAlbum(id) {
   const d = await api('/api/albums/' + encodeURIComponent(id));
   cur.album = d.album;
   cur.items = d.items;
+}
+
+function updateStorage() {
+  if (!$('storageText')) return;
+  const bytes = media.reduce((s, m) => s + (m.size || 0), 0);
+  const gb = bytes / 1e9;
+  $('storageText').textContent =
+    (gb >= 1 ? gb.toFixed(2) + ' GB' : Math.round(bytes / 1e6) + ' MB') +
+    ' folosiți · ' + media.length + ' elemente';
+  $('storageFill').style.width = Math.max(3, Math.min(100, (gb / 50) * 100)) + '%';
 }
 
 // ─── Router ─────────────────────────────────────────────────────────────────
@@ -61,8 +71,7 @@ function route() {
   const m = h.match(/^\/album\/([0-9a-f-]{36})$/i);
 
   if (m) {
-    cur.view = 'album';
-    cur.albumId = m[1];
+    cur.view = 'album'; cur.albumId = m[1];
     showView();
     loadAlbum(m[1]).then(renderAlbum).catch(() => { location.hash = '#/albums'; });
   } else if (h === '/albums') {
@@ -99,7 +108,7 @@ function updateNav() {
   });
 }
 
-// ─── Etichete de zi (Azi / Ieri / Luni / 5 septembrie) ──────────────────────
+// ─── Etichete de zi ────────────────────────────────────────────────────────
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
@@ -126,14 +135,10 @@ function groupByDay(list) {
   return groups;
 }
 
-// ─── Layout „justified” ────────────────────────────────────────────────────
-const GAP = 3;
-const targetRowH = () => (window.innerWidth < 700 ? 116 : 184);
-
-function aspect(it) {
-  if (it.width && it.height) return it.width / it.height;
-  return it.type === 'video' ? 16 / 9 : 1;
-}
+// ─── Layout justified ──────────────────────────────────────────────────────
+const GAP = 4;
+const targetRowH = () => (window.innerWidth < 700 ? 112 : 200);
+const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
 
 function justify(items, width, th) {
   const rows = [];
@@ -159,16 +164,14 @@ function justify(items, width, th) {
 function buildGallery(container, list) {
   container._list = list;
   container.textContent = '';
-  const width = container.clientWidth || container.parentElement.clientWidth || 800;
+  const width = container.clientWidth || container.parentElement.clientWidth || 900;
   const th = targetRowH();
 
   const frag = document.createDocumentFragment();
   for (const [, items] of groupByDay(list)) {
     const day = document.createElement('section');
     day.className = 'j-day';
-    const h = document.createElement('h2');
-    h.textContent = dayLabel(items[0].takenAt || items[0].createdAt);
-    day.appendChild(h);
+    day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id)));
     for (const r of justify(items, width, th)) {
       const rowEl = document.createElement('div');
       rowEl.className = 'j-row';
@@ -178,6 +181,26 @@ function buildGallery(container, list) {
     frag.appendChild(day);
   }
   container.appendChild(frag);
+}
+
+function dayHead(dateIso, ids) {
+  const wrap = document.createElement('div');
+  wrap.className = 'j-dayhead';
+  const chk = document.createElement('span');
+  chk.className = 'daychk';
+  if (ids.length && ids.every((id) => selected.has(id))) chk.classList.add('on');
+  chk.addEventListener('click', () => {
+    const on = ids.every((id) => selected.has(id));
+    for (const id of ids) { if (on) selected.delete(id); else selected.add(id); }
+    updateSelBar();
+    rerender();
+  });
+  const lbl = document.createElement('span');
+  lbl.className = 'daylabel';
+  lbl.textContent = dayLabel(dateIso);
+  wrap.appendChild(chk);
+  wrap.appendChild(lbl);
+  return wrap;
 }
 
 function jtile(cell) {
@@ -216,9 +239,7 @@ function jtile(cell) {
   return b;
 }
 
-function currentList() {
-  return cur.view === 'album' ? cur.items : filteredMedia();
-}
+const currentList = () => (cur.view === 'album' ? cur.items : filteredMedia());
 
 function filteredMedia() {
   if (!query) return media;
@@ -269,8 +290,7 @@ function albumCard(a) {
   nm.textContent = a.name;
   const sub = document.createElement('div');
   sub.className = 'album-sub muted';
-  sub.textContent =
-    a.count + (a.count === 1 ? ' element' : ' elemente') + (a.shareToken ? ' · partajat' : '');
+  sub.textContent = a.count + (a.count === 1 ? ' element' : ' elemente') + (a.shareToken ? ' · partajat' : '');
   meta.appendChild(nm);
   meta.appendChild(sub);
 
@@ -321,13 +341,23 @@ function toggleSelect(id) {
   document.querySelectorAll('.j-tile').forEach((el) => {
     if (el.dataset.id === id) el.classList.toggle('sel', selected.has(id));
   });
+  syncDayChecks();
   updateSelBar();
+}
+
+function syncDayChecks() {
+  document.querySelectorAll('.j-day').forEach((day) => {
+    const ids = [...day.querySelectorAll('.j-tile')].map((el) => el.dataset.id);
+    const chk = day.querySelector('.daychk');
+    if (chk) chk.classList.toggle('on', ids.length > 0 && ids.every((id) => selected.has(id)));
+  });
 }
 
 function clearSel() {
   if (!selected.size) { updateSelBar(); return; }
   selected.clear();
   document.querySelectorAll('.j-tile.sel').forEach((el) => el.classList.remove('sel'));
+  document.querySelectorAll('.daychk.on').forEach((el) => el.classList.remove('on'));
   updateSelBar();
 }
 
@@ -339,7 +369,7 @@ function updateSelBar() {
   $('selRemove').hidden = cur.view !== 'album';
 }
 
-// ─── Chooser „Adaugă în album” ─────────────────────────────────────────────
+// ─── Chooser ───────────────────────────────────────────────────────────────
 function openChooser(anchor) {
   const menu = $('chooser');
   const list = $('chooserList');
@@ -438,7 +468,7 @@ const lb = $('lightbox');
 const lbStage = $('lbStage');
 const lbDelBtn = lb.querySelector('.lb-del');
 const lbDl = $('lbDownload');
-const lbCaption = $('lbCaption');
+const lbStrip = $('lbStrip');
 
 function sizeStr(n) {
   if (!n) return '';
@@ -453,11 +483,14 @@ function openLightbox(list, id, canDelete) {
   lbDelBtn.hidden = !canDelete;
   lb.hidden = false;
   document.body.classList.add('no-scroll');
+  renderStrip();
   showLb();
 }
 
 function closeLightbox() {
   lb.hidden = true;
+  lb.classList.remove('has-info');
+  $('lbInfo').hidden = true;
   lbStage.textContent = '';
   document.body.classList.remove('no-scroll');
 }
@@ -469,9 +502,7 @@ function showLb() {
   if (it.type === 'video') {
     const v = document.createElement('video');
     v.src = '/media/' + it.id + '/full';
-    v.controls = true;
-    v.autoplay = true;
-    v.playsInline = true;
+    v.controls = true; v.autoplay = true; v.playsInline = true;
     lbStage.appendChild(v);
   } else {
     const im = document.createElement('img');
@@ -481,8 +512,68 @@ function showLb() {
   }
   lbDl.href = '/media/' + it.id + '/full';
   lbDl.setAttribute('download', it.originalName || it.id);
-  lbCaption.textContent = [it.originalName, dayLabel(it.takenAt || it.createdAt), sizeStr(it.size)]
-    .filter(Boolean).join('   ·   ');
+
+  lbStrip.querySelectorAll('.strip-thumb').forEach((el, i) => {
+    el.classList.toggle('cur', i === lbIndex);
+    if (i === lbIndex) el.scrollIntoView({ inline: 'center', block: 'nearest' });
+  });
+  if (!$('lbInfo').hidden) renderInfo();
+}
+
+function renderStrip() {
+  lbStrip.textContent = '';
+  lbList.forEach((it, i) => {
+    const t = document.createElement('button');
+    t.className = 'strip-thumb' + (i === lbIndex ? ' cur' : '');
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = '/media/' + it.id + '/thumb';
+    t.appendChild(img);
+    t.onclick = () => { lbIndex = i; showLb(); };
+    lbStrip.appendChild(t);
+  });
+}
+
+function renderInfo() {
+  const it = lbList[lbIndex];
+  const body = $('lbInfoBody');
+  body.textContent = '';
+  if (!it) return;
+  const d = new Date(it.takenAt || it.createdAt);
+
+  const date = document.createElement('div');
+  date.className = 'info-date';
+  date.textContent = cap(d.toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+  const time = document.createElement('div');
+  time.className = 'info-time';
+  time.textContent = d.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+  body.appendChild(date);
+  body.appendChild(time);
+
+  const rows = [];
+  if (it.originalName) rows.push(['image', it.originalName]);
+  if (it.width && it.height) rows.push(['straighten', `${it.width} × ${it.height}  ·  ${(it.width * it.height / 1e6).toFixed(1)} MP`]);
+  if (it.size) rows.push(['sd_card', sizeStr(it.size)]);
+  rows.push([it.type === 'video' ? 'movie' : 'photo_camera', it.type === 'video' ? 'Videoclip' : 'Fotografie']);
+  for (const [ic, txt] of rows) {
+    const row = document.createElement('div');
+    row.className = 'info-row';
+    const i = document.createElement('span');
+    i.className = 'msi';
+    i.textContent = ic;
+    const s = document.createElement('span');
+    s.textContent = txt;
+    row.appendChild(i);
+    row.appendChild(s);
+    body.appendChild(row);
+  }
+}
+
+function toggleInfo() {
+  const on = $('lbInfo').hidden;
+  $('lbInfo').hidden = !on;
+  lb.classList.toggle('has-info', on);
+  if (on) renderInfo();
 }
 
 function stepLb(d) {
@@ -504,6 +595,7 @@ async function deleteCurrentLb() {
   rerender();
   if (!lbList.length) return closeLightbox();
   lbIndex = Math.min(lbIndex, lbList.length - 1);
+  renderStrip();
   showLb();
 }
 
@@ -584,13 +676,13 @@ function toast(msg) {
 
 // ─── Wiring ────────────────────────────────────────────────────────────────
 function wire() {
-  // sidebar (mobil)
-  $('menuBtn').onclick = () => { $('side').classList.add('open'); $('sideScrim').hidden = false; };
+  const openSide = () => { $('side').classList.add('open'); $('sideScrim').hidden = false; };
+  const closeSide = () => { $('side').classList.remove('open'); $('sideScrim').hidden = true; };
+  $('menuBtn').onclick = openSide;
+  $('menuClose').onclick = closeSide;
   $('sideScrim').onclick = closeSide;
   document.querySelectorAll('.side-link').forEach((a) => a.addEventListener('click', closeSide));
-  function closeSide() { $('side').classList.remove('open'); $('sideScrim').hidden = true; }
 
-  // cont
   $('acctBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = !$('acctMenu').hidden; };
   document.addEventListener('click', () => { $('acctMenu').hidden = true; });
   $('logoutBtn').onclick = async () => {
@@ -598,7 +690,6 @@ function wire() {
     location.replace('/login');
   };
 
-  // căutare
   $('search').addEventListener('input', (e) => {
     query = e.target.value.trim();
     $('searchClear').hidden = !query;
@@ -609,7 +700,6 @@ function wire() {
     if (cur.view === 'all') renderAll();
   };
 
-  // upload
   const fileInput = $('fileInput');
   $('uploadBtn').onclick = () => fileInput.click();
   fileInput.addEventListener('change', () => {
@@ -618,7 +708,6 @@ function wire() {
   });
   $('uploadClose').onclick = () => { $('uploadTray').hidden = true; $('uploadList').textContent = ''; };
 
-  // bara de selecție
   $('selCancel').onclick = clearSel;
   $('selAdd').onclick = (e) => {
     if (!selected.size) return toast('Nimic selectat');
@@ -658,7 +747,6 @@ function wire() {
     rerender();
   };
 
-  // albume
   $('newAlbumBtn').onclick = async () => {
     const name = prompt('Nume album');
     if (!name || !name.trim()) return;
@@ -691,7 +779,6 @@ function wire() {
     } catch (e) { toast(e.message); }
   };
 
-  // modal partajare
   $('shareCopy').onclick = async () => {
     const v = $('shareUrl').value;
     try {
@@ -714,7 +801,6 @@ function wire() {
   };
   $('shareClose').onclick = () => { $('shareModal').hidden = true; };
 
-  // modal picker
   $('pickerClose').onclick = () => { $('pickerModal').hidden = true; };
   $('pickerConfirm').onclick = async () => {
     if (!pickerSel.size) { $('pickerModal').hidden = true; return; }
@@ -728,19 +814,22 @@ function wire() {
     } catch (e) { toast(e.message); }
   };
 
-  // lightbox
   lb.addEventListener('click', (e) => {
-    const act = e.target.dataset && e.target.dataset.act;
-    if (act === 'close' || e.target === lb || e.target === lbStage) closeLightbox();
+    const btn = e.target.closest('[data-act]');
+    const act = btn && btn.dataset.act;
+    if (act === 'close') closeLightbox();
     else if (act === 'prev') stepLb(-1);
     else if (act === 'next') stepLb(1);
     else if (act === 'delete') deleteCurrentLb();
+    else if (act === 'info') toggleInfo();
+    else if (e.target === lb || e.target === lbStage) closeLightbox();
   });
   document.addEventListener('keydown', (e) => {
     if (!lb.hidden) {
       if (e.key === 'Escape') closeLightbox();
       else if (e.key === 'ArrowLeft') stepLb(-1);
       else if (e.key === 'ArrowRight') stepLb(1);
+      else if (e.key === 'i') toggleInfo();
       return;
     }
     if (e.key === 'Escape') {
@@ -750,7 +839,6 @@ function wire() {
     }
   });
 
-  // drag & drop
   const dropOverlay = $('dropOverlay');
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');

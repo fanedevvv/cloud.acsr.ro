@@ -23,14 +23,8 @@ function dayLabel(iso) {
     : { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function sizeStr(n) {
-  if (!n) return '';
-  if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
-  return (n / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-const GAP = 3;
-const targetRowH = () => (window.innerWidth < 700 ? 116 : 184);
+const GAP = 4;
+const targetRowH = () => (window.innerWidth < 700 ? 112 : 200);
 const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
 
 function justify(list, width, th) {
@@ -81,7 +75,7 @@ function debounce(fn, ms) {
 function render() {
   const grid = $('grid');
   grid.textContent = '';
-  const width = grid.clientWidth || 800;
+  const width = grid.clientWidth || 900;
   const th = targetRowH();
 
   const groups = new Map();
@@ -94,9 +88,13 @@ function render() {
   for (const [, list] of groups) {
     const day = document.createElement('section');
     day.className = 'j-day';
-    const h = document.createElement('h2');
-    h.textContent = dayLabel(list[0].takenAt || list[0].createdAt);
-    day.appendChild(h);
+    const head = document.createElement('div');
+    head.className = 'j-dayhead';
+    const lbl = document.createElement('span');
+    lbl.className = 'daylabel';
+    lbl.textContent = dayLabel(list[0].takenAt || list[0].createdAt);
+    head.appendChild(lbl);
+    day.appendChild(head);
     for (const r of justify(list, width, th)) {
       const rowEl = document.createElement('div');
       rowEl.className = 'j-row';
@@ -131,13 +129,14 @@ function tile(cell) {
 const lb = $('lightbox');
 const lbStage = $('lbStage');
 const lbDl = $('lbDownload');
-const lbCaption = $('lbCaption');
+const lbStrip = $('lbStrip');
 
 function open(id) {
   lbIndex = items.findIndex((x) => x.id === id);
   if (lbIndex < 0) return;
   lb.hidden = false;
   document.body.classList.add('no-scroll');
+  renderStrip();
   show();
 }
 function close() {
@@ -152,9 +151,7 @@ function show() {
   if (it.type === 'video') {
     const v = document.createElement('video');
     v.src = base + '/media/' + it.id + '/full';
-    v.controls = true;
-    v.autoplay = true;
-    v.playsInline = true;
+    v.controls = true; v.autoplay = true; v.playsInline = true;
     lbStage.appendChild(v);
   } else {
     const im = document.createElement('img');
@@ -163,8 +160,23 @@ function show() {
   }
   lbDl.href = base + '/media/' + it.id + '/full';
   lbDl.setAttribute('download', it.originalName || it.id);
-  lbCaption.textContent = [it.originalName, dayLabel(it.takenAt || it.createdAt), sizeStr(it.size)]
-    .filter(Boolean).join('   ·   ');
+  lbStrip.querySelectorAll('.strip-thumb').forEach((el, i) => {
+    el.classList.toggle('cur', i === lbIndex);
+    if (i === lbIndex) el.scrollIntoView({ inline: 'center', block: 'nearest' });
+  });
+}
+function renderStrip() {
+  lbStrip.textContent = '';
+  items.forEach((it, i) => {
+    const t = document.createElement('button');
+    t.className = 'strip-thumb' + (i === lbIndex ? ' cur' : '');
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = base + '/media/' + it.id + '/thumb';
+    t.appendChild(img);
+    t.onclick = () => { lbIndex = i; show(); };
+    lbStrip.appendChild(t);
+  });
 }
 function step(d) {
   if (!items.length) return;
@@ -174,10 +186,12 @@ function step(d) {
 
 function wire() {
   lb.addEventListener('click', (e) => {
-    const act = e.target.dataset && e.target.dataset.act;
-    if (act === 'close' || e.target === lb || e.target === lbStage) close();
+    const btn = e.target.closest('[data-act]');
+    const act = btn && btn.dataset.act;
+    if (act === 'close') close();
     else if (act === 'prev') step(-1);
     else if (act === 'next') step(1);
+    else if (e.target === lb || e.target === lbStage) close();
   });
   document.addEventListener('keydown', (e) => {
     if (lb.hidden) return;
