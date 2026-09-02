@@ -1181,7 +1181,12 @@ function wire() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (!$('helpModal').hidden && e.key === 'Escape') { $('helpModal').hidden = true; return; }
+    // Modalele au prioritate, chiar și peste lightbox
+    if (e.key === 'Escape') {
+      if (!$('helpModal').hidden) { $('helpModal').hidden = true; return; }
+      if (!$('shareModal').hidden) { $('shareModal').hidden = true; return; }
+      if (!$('pickerModal').hidden) { $('pickerModal').hidden = true; return; }
+    }
     if (!lb.hidden) {
       if (e.key === 'Escape') closeLightbox();
       else if (e.key === 'ArrowLeft') { stopSlideshow(); stepLb(-1); }
