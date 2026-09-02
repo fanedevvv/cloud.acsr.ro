@@ -5,32 +5,38 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>Album partajat — Cloud</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=3">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="/assets/styles.css?v=4">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">Cloud</div>
-    <div class="spacer"></div>
-    <span id="count" class="muted count"></span>
-  </header>
+  <div class="main">
+    <header class="topbar">
+      <div class="brand">Cloud</div>
+      <div class="spacer"></div>
+    </header>
 
-  <main class="view">
-    <div class="section-head"><h1 id="albumTitle">Album partajat</h1></div>
-    <div class="gallery" id="grid"></div>
-    <div id="notfound" class="empty" hidden>
-      <p>Linkul nu este valid sau a fost dezactivat.</p>
-    </div>
-  </main>
+    <main class="view">
+      <div class="section-head"><h1 id="albumTitle">Album partajat</h1><span id="count" class="muted"></span></div>
+      <div id="grid" class="j-scroll"></div>
+      <div id="notfound" class="empty" hidden>
+        <p>Linkul nu este valid sau a fost dezactivat.</p>
+      </div>
+    </main>
+  </div>
 
   <div id="lightbox" class="lightbox" hidden>
-    <button class="icon-btn lb-close" data-act="close" aria-label="Închide">×</button>
-    <a id="lbDownload" class="icon-btn lb-dl" download aria-label="Descarcă">⭳</a>
+    <div class="lb-bar">
+      <button class="icon-btn lb-x" data-act="close" aria-label="Înapoi">←</button>
+      <div class="spacer"></div>
+      <a id="lbDownload" class="icon-btn" download aria-label="Descarcă">⭳</a>
+    </div>
     <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior">‹</button>
     <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor">›</button>
     <div class="lb-stage" id="lbStage"></div>
     <div class="lb-caption" id="lbCaption"></div>
   </div>
 
-  <script src="/assets/share.js?v=3"></script>
+  <script src="/assets/share.js?v=4"></script>
 </body>
 </html>
