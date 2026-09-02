@@ -103,13 +103,24 @@
       </main>
 
       <main id="viewAlbum" class="view" hidden>
-        <div class="section-head album-head">
+        <div class="album-head">
           <button id="albumBack" class="icon-btn2" aria-label="Înapoi"><span class="msi">arrow_back</span></button>
-          <h1 id="albumTitle"></h1><div class="spacer"></div>
-          <button id="albumAdd" class="icon-btn2" title="Adaugă poze" aria-label="Adaugă poze"><span class="msi">add_photo_alternate</span></button>
-          <button id="albumShare" class="icon-btn2" title="Partajează" aria-label="Partajează"><span class="msi">share</span></button>
-          <button id="albumRename" class="icon-btn2" title="Redenumește" aria-label="Redenumește"><span class="msi">edit</span></button>
-          <button id="albumDelete" class="icon-btn2" title="Șterge album" aria-label="Șterge album"><span class="msi">delete</span></button>
+          <div class="album-head-actions">
+            <button id="albumAdd" class="btn ghost"><span class="msi">add_photo_alternate</span>Adaugă</button>
+            <button id="albumShare" class="btn ghost"><span class="msi">share</span>Partajează</button>
+            <div class="acct">
+              <button id="albumMenuBtn" class="icon-btn2" aria-label="Mai multe"><span class="msi">more_vert</span></button>
+              <div id="albumMenu" class="menu2" hidden>
+                <button id="albumCoverBtn" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
+                <button id="albumRename" class="menu-item"><span class="msi">edit</span>Redenumește</button>
+                <button id="albumDelete" class="menu-item"><span class="msi">delete</span>Șterge album</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="album-title-wrap">
+          <h1 id="albumTitle" tabindex="0" title="Apasă pentru a edita titlul"></h1>
+          <div id="albumSub" class="album-sub-line muted"></div>
         </div>
         <div id="albumGrid" class="j-scroll"></div>
         <div id="albumEmpty" class="empty" hidden><span class="msi big">add_photo_alternate</span><p>Album gol.</p></div>
@@ -135,8 +146,8 @@
 
   <div id="shareModal" class="modal" hidden>
     <div class="modal-card">
-      <h2>Link de partajare</h2>
-      <p class="muted">Oricine are linkul poate vedea albumul, fără parolă.</p>
+      <h2 id="shareTitle">Link de partajare</h2>
+      <p class="muted" id="shareDesc">Oricine are linkul poate vedea albumul, fără parolă.</p>
       <div class="share-row">
         <input id="shareUrl" type="text" readonly>
         <button id="shareCopy" class="btn primary">Copiază</button>
@@ -151,9 +162,9 @@
   <div id="pickerModal" class="modal" hidden>
     <div class="modal-card wide">
       <div class="picker-head">
-        <h2>Alege poze</h2><span id="pickerCount" class="muted"></span><div class="spacer"></div>
+        <h2 id="pickerTitle">Alege poze</h2><span id="pickerCount" class="muted"></span><div class="spacer"></div>
         <button id="pickerConfirm" class="btn primary">Adaugă</button>
-        <button id="pickerClose" class="btn">Anulează</button>
+        <button id="pickerClose" class="btn">Închide</button>
       </div>
       <div id="pickerGrid" class="picker-grid"></div>
     </div>
@@ -180,6 +191,7 @@
       <button class="icon-btn" data-act="close" aria-label="Înapoi"><span class="msi">arrow_back</span></button>
       <div class="spacer"></div>
       <button class="icon-btn lb-slideshow" data-act="slideshow" aria-label="Slideshow"><span class="msi">play_arrow</span></button>
+      <button class="icon-btn lb-share" data-act="share" aria-label="Partajează"><span class="msi">share</span></button>
       <button class="icon-btn lb-fav" data-act="fav" aria-label="Favorite"><span class="msi">star</span></button>
       <button class="icon-btn" data-act="info" aria-label="Informații"><span class="msi">info</span></button>
       <a id="lbDownload" class="icon-btn" download aria-label="Descarcă"><span class="msi">download</span></a>

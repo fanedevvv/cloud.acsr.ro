@@ -130,7 +130,7 @@ const jsonBody = express.json({ limit: '256kb' });
 const MEDIA_COLS = `
   id, type, mime, original_name AS originalName, width, height, size,
   duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt,
-  favorite, archived, caption, deleted_at AS deletedAt
+  favorite, archived, caption, deleted_at AS deletedAt, share_token AS shareToken
 `;
 
 const mapRow = (r) => ({
@@ -138,7 +138,14 @@ const mapRow = (r) => ({
   hasThumb: !!r.hasThumb,
   favorite: !!r.favorite,
   archived: !!r.archived,
+  shareToken: r.shareToken || null,
 });
+
+function getSharedPhoto(token) {
+  if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
+  const row = db.prepare('SELECT * FROM media WHERE share_token = ?').get(token);
+  return row && !row.deleted_at ? row : null;
+}
 
 function mediaInAlbum(albumId) {
   return db.prepare(`
@@ -150,21 +157,36 @@ function mediaInAlbum(albumId) {
 }
 
 function albumSummary(a) {
-  const count = db.prepare(`
-    SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
+  const agg = db.prepare(`
+    SELECT COUNT(*) n,
+           MIN(COALESCE(m.taken_at, m.created_at)) firstAt,
+           MAX(COALESCE(m.taken_at, m.created_at)) lastAt
+    FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL
-  `).get(a.id).n;
-  const cover = db.prepare(`
+  `).get(a.id);
+  const newest = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
+  // coperta aleasă manual, dacă e încă un membru valid; altfel cea mai recentă
+  let coverId = null;
+  if (a.cover_id) {
+    const ok = db.prepare(`
+      SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id
+      WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL
+    `).get(a.id, a.cover_id);
+    if (ok) coverId = a.cover_id;
+  }
+  if (!coverId) coverId = newest ? newest.id : null;
   return {
     id: a.id,
     name: a.name,
     createdAt: a.created_at,
-    count,
-    coverId: cover ? cover.id : null,
+    count: agg.n,
+    firstAt: agg.firstAt || null,
+    lastAt: agg.lastAt || null,
+    coverId,
     shareToken: a.share_token || null,
   };
 }
@@ -384,10 +406,23 @@ app.get('/api/albums/:id', requireAuth, (req, res) => {
 app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  const name = String(req.body && req.body.name || '').trim().slice(0, 120);
-  if (!name) return res.status(400).json({ error: 'nume gol' });
-  db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, a.id);
-  res.json({ ok: true });
+  const b = req.body || {};
+
+  if ('name' in b) {
+    const name = String(b.name || '').trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: 'nume gol' });
+    db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, a.id);
+  }
+  if ('coverId' in b) {
+    const cid = String(b.coverId || '');
+    if (cid && !UUID_RE.test(cid)) return res.status(400).json({ error: 'copertă invalidă' });
+    if (cid) {
+      const member = db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?').get(a.id, cid);
+      if (!member) return res.status(400).json({ error: 'poza nu e în album' });
+    }
+    db.prepare('UPDATE albums SET cover_id = ? WHERE id = ?').run(cid || null, a.id);
+  }
+  res.json(albumSummary(getAlbum(a.id)));
 });
 
 app.delete('/api/albums/:id', requireAuth, checkCsrf, (req, res) => {
@@ -447,6 +482,26 @@ app.delete('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
   res.json({ ok: true });
 });
 
+// Link de partajare pentru o singură poză / un singur clip
+app.post('/api/media/:id/share', requireAuth, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  let token = row.share_token;
+  if (!token) {
+    token = crypto.randomBytes(24).toString('base64url');
+    db.prepare('UPDATE media SET share_token = ?, share_created_at = ? WHERE id = ?')
+      .run(token, new Date().toISOString(), row.id);
+  }
+  res.json({ token, path: `/p/${token}` });
+});
+
+app.delete('/api/media/:id/share', requireAuth, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE media SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
 // ─── Partajare publică (fără login, doar citire) ────────────────────────────
 const shareLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -486,6 +541,40 @@ app.get('/s/:token', shareLimiter, (req, res) => {
     return res.status(404).sendFile(path.join(__dirname, 'public', 'share.html'));
   }
   res.sendFile(path.join(__dirname, 'public', 'share.html'));
+});
+
+// ─── Partajare publică: o singură poză ─────────────────────────────────────
+app.get('/api/p/:token', shareLimiter, (req, res) => {
+  const row = getSharedPhoto(req.params.token);
+  if (!row) return res.status(404).json({ error: 'link invalid' });
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.json({
+    type: row.type,
+    mime: row.mime,
+    originalName: row.original_name,
+    width: row.width,
+    height: row.height,
+    size: row.size,
+    takenAt: row.taken_at,
+    createdAt: row.created_at,
+    caption: row.caption || '',
+  });
+});
+
+function sharePhotoGuard(req, res, next) {
+  const row = getSharedPhoto(req.params.token);
+  if (!row) return res.status(404).end();
+  req.mediaRow = row;
+  next();
+}
+app.get('/p/:token/thumb', shareLimiter, sharePhotoGuard, (req, res) => sendThumb(req.mediaRow, res));
+app.get('/p/:token/full', shareLimiter, sharePhotoGuard, (req, res) => sendFull(req.mediaRow, res));
+
+app.get('/p/:token', shareLimiter, (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.set('Cache-Control', 'no-store');
+  const code = getSharedPhoto(req.params.token) ? 200 : 404;
+  res.status(code).sendFile(path.join(__dirname, 'public', 'photo.html'));
 });
 
 // ─── Pagini + statice ───────────────────────────────────────────────────────

@@ -376,11 +376,35 @@ function renderMemories() {
   }
 }
 
+function dateRange(aIso, bIso) {
+  if (!aIso) return '';
+  const a = new Date(aIso);
+  const b = new Date(bIso || aIso);
+  const full = { day: 'numeric', month: 'long', year: 'numeric' };
+  if (a.toDateString() === b.toDateString()) return cap(a.toLocaleDateString('ro-RO', full));
+  const sameYear = a.getFullYear() === b.getFullYear();
+  if (sameYear && a.getMonth() === b.getMonth()) {
+    return a.getDate() + '–' + b.toLocaleDateString('ro-RO', full);
+  }
+  if (sameYear) {
+    return a.toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' }) +
+      ' – ' + b.toLocaleDateString('ro-RO', full);
+  }
+  return a.toLocaleDateString('ro-RO', full) + ' – ' + b.toLocaleDateString('ro-RO', full);
+}
+
 function renderAlbum() {
   showView();
   updateNav();
   if (!cur.album) return;
-  $('albumTitle').textContent = cur.album.name;
+  if (document.activeElement !== $('albumTitle')) $('albumTitle').textContent = cur.album.name;
+  const a = cur.album;
+  const n = a.count != null ? a.count : cur.items.length;
+  const parts = [n + (n === 1 ? ' element' : ' elemente')];
+  const range = dateRange(a.firstAt, a.lastAt);
+  if (range) parts.push(range);
+  if (a.shareToken) parts.push('partajat');
+  $('albumSub').textContent = parts.join('  ·  ');
   buildGallery($('albumGrid'), cur.items);
   $('albumEmpty').hidden = cur.items.length > 0;
 }
@@ -599,19 +623,54 @@ async function addToAlbum(albumId, ids) {
   } catch (e) { toast(e.message); }
 }
 
-// ─── Partajare ─────────────────────────────────────────────────────────────
-async function openShare() {
-  let token = cur.album && cur.album.shareToken;
+// ─── Partajare (album sau o singură poză) ──────────────────────────────────
+let shareCtx = null; // { kind: 'album'|'photo', id, item? }
+
+async function openShareModal(kind, id, item) {
+  shareCtx = { kind, id, item: item || null };
+  const apiBase = kind === 'album' ? '/api/albums/' + id + '/share' : '/api/media/' + id + '/share';
+  const pubPrefix = kind === 'album' ? '/s/' : '/p/';
+
+  let token = kind === 'album'
+    ? (cur.album && cur.album.shareToken)
+    : (item && item.shareToken);
+
   if (!token) {
     try {
-      const d = await api('/api/albums/' + cur.albumId + '/share', { method: 'POST' });
+      const d = await api(apiBase, { method: 'POST' });
       token = d.token;
-      cur.album.shareToken = token;
+      if (kind === 'album' && cur.album) cur.album.shareToken = token;
+      if (kind === 'photo' && item) item.shareToken = token;
+      const local = media.find((m) => m.id === id);
+      if (local) local.shareToken = token;
       await loadAlbums();
     } catch (e) { return toast(e.message); }
   }
-  $('shareUrl').value = location.origin + '/s/' + token;
+
+  $('shareTitle').textContent = kind === 'album' ? 'Partajează albumul' : 'Partajează poza';
+  $('shareDesc').textContent = kind === 'album'
+    ? 'Oricine are linkul poate vedea toate pozele din album, fără parolă.'
+    : 'Oricine are linkul poate vedea această poză, fără parolă.';
+  $('shareUrl').value = location.origin + pubPrefix + token;
   $('shareModal').hidden = false;
+  if (kind === 'album') renderAlbum();
+}
+
+async function revokeShare() {
+  if (!shareCtx) return;
+  const { kind, id, item } = shareCtx;
+  const apiBase = kind === 'album' ? '/api/albums/' + id + '/share' : '/api/media/' + id + '/share';
+  try {
+    await api(apiBase, { method: 'DELETE' });
+    if (kind === 'album' && cur.album) cur.album.shareToken = null;
+    if (kind === 'photo' && item) item.shareToken = null;
+    const local = media.find((m) => m.id === id);
+    if (local) local.shareToken = null;
+    await loadAlbums();
+    $('shareModal').hidden = true;
+    toast('Link dezactivat');
+    if (kind === 'album') renderAlbum();
+  } catch (e) { toast(e.message); }
 }
 
 // ─── Picker ────────────────────────────────────────────────────────────────
@@ -647,6 +706,56 @@ function openPicker() {
     grid.appendChild(b);
   }
   $('pickerCount').textContent = '0 alese';
+  $('pickerModal').hidden = false;
+}
+
+// ─── Titlu album editabil pe loc ──────────────────────────────────────────
+function startTitleEdit() {
+  $('albumMenu').hidden = true;
+  const h = $('albumTitle');
+  h.setAttribute('contenteditable', 'true');
+  h.focus();
+  const r = document.createRange();
+  r.selectNodeContents(h);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+// ─── Alegerea copertei albumului ─────────────────────────────────────────
+function openCoverPicker() {
+  $('albumMenu').hidden = true;
+  const grid = $('pickerGrid');
+  grid.textContent = '';
+  $('pickerTitle').textContent = 'Alege coperta';
+  $('pickerConfirm').hidden = true;
+  if (!cur.items.length) {
+    const p = document.createElement('p');
+    p.className = 'picker-empty muted';
+    p.textContent = 'Albumul e gol.';
+    grid.appendChild(p);
+  }
+  for (const it of cur.items) {
+    const b = document.createElement('button');
+    b.className = 'p-tile';
+    b.type = 'button';
+    if (cur.album && cur.album.coverId === it.id) b.classList.add('sel');
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = '/media/' + it.id + '/thumb';
+    b.appendChild(img);
+    b.onclick = async () => {
+      try {
+        const a = await api('/api/albums/' + cur.albumId, { method: 'PATCH', body: { coverId: it.id } });
+        cur.album = a;
+        await loadAlbums();
+        $('pickerModal').hidden = true;
+        toast('Copertă setată');
+      } catch (e) { toast(e.message); }
+    };
+    grid.appendChild(b);
+  }
+  $('pickerCount').textContent = '';
   $('pickerModal').hidden = false;
 }
 
@@ -985,18 +1094,13 @@ function wire() {
   };
   $('albumBack').onclick = () => { location.hash = '#/albums'; };
   $('albumAdd').onclick = () => openPicker();
-  $('albumShare').onclick = () => openShare();
-  $('albumRename').onclick = async () => {
-    const name = prompt('Nume nou', cur.album.name);
-    if (!name || !name.trim()) return;
-    try {
-      await api('/api/albums/' + cur.albumId, { method: 'PATCH', body: { name: name.trim() } });
-      cur.album.name = name.trim();
-      $('albumTitle').textContent = cur.album.name;
-      await loadAlbums();
-      toast('Redenumit');
-    } catch (e) { toast(e.message); }
-  };
+  $('albumShare').onclick = () => openShareModal('album', cur.albumId);
+
+  // meniul ⋮ al albumului
+  $('albumMenuBtn').onclick = (e) => { e.stopPropagation(); $('albumMenu').hidden = !$('albumMenu').hidden; };
+  document.addEventListener('click', () => { $('albumMenu').hidden = true; });
+  $('albumCoverBtn').onclick = () => openCoverPicker();
+  $('albumRename').onclick = () => startTitleEdit();
   $('albumDelete').onclick = async () => {
     if (!confirm('Ștergi albumul „' + cur.album.name + '”? Pozele rămân în galerie.')) return;
     try {
@@ -1006,6 +1110,27 @@ function wire() {
     } catch (e) { toast(e.message); }
   };
 
+  // titlu editabil pe loc (stil Google Photos)
+  const title = $('albumTitle');
+  title.addEventListener('click', startTitleEdit);
+  title.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
+    else if (e.key === 'Escape') { title.textContent = cur.album ? cur.album.name : ''; title.blur(); }
+  });
+  title.addEventListener('blur', async () => {
+    title.removeAttribute('contenteditable');
+    if (!cur.album) return;
+    const name = title.textContent.replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!name || name === cur.album.name) { title.textContent = cur.album.name; return; }
+    try {
+      const a = await api('/api/albums/' + cur.albumId, { method: 'PATCH', body: { name } });
+      cur.album = a;
+      await loadAlbums();
+      renderAlbum();
+      toast('Titlu salvat');
+    } catch (e) { title.textContent = cur.album.name; toast(e.message); }
+  });
+
   $('shareCopy').onclick = async () => {
     const v = $('shareUrl').value;
     try { await navigator.clipboard.writeText(v); toast('Link copiat'); }
@@ -1014,15 +1139,9 @@ function wire() {
       try { document.execCommand('copy'); toast('Link copiat'); } catch { toast('Copiază manual'); }
     }
   };
-  $('shareRevoke').onclick = async () => {
+  $('shareRevoke').onclick = () => {
     if (!confirm('Dezactivezi linkul? Nu va mai funcționa pentru nimeni.')) return;
-    try {
-      await api('/api/albums/' + cur.albumId + '/share', { method: 'DELETE' });
-      cur.album.shareToken = null;
-      await loadAlbums();
-      $('shareModal').hidden = true;
-      toast('Link dezactivat');
-    } catch (e) { toast(e.message); }
+    revokeShare();
   };
   $('shareClose').onclick = () => { $('shareModal').hidden = true; };
 
