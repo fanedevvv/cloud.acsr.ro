@@ -28,6 +28,7 @@ const targetRowH = () => (window.innerWidth < 700 ? 112 : 200);
 const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
 
 function justify(list, width, th) {
+  const W = Math.floor(width);
   const rows = [];
   let row = [];
   let arSum = 0;
@@ -35,14 +36,17 @@ function justify(list, width, th) {
     const ar = Math.max(0.4, Math.min(3.4, aspect(it)));
     row.push({ it, ar });
     arSum += ar;
-    if (arSum * th + GAP * (row.length - 1) >= width) {
-      const h = (width - GAP * (row.length - 1)) / arSum;
-      rows.push(row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) })));
+    if (arSum * th + GAP * (row.length - 1) >= W) {
+      const h = (W - GAP * (row.length - 1)) / arSum;
+      const cells = row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) }));
+      const used = cells.reduce((s, c) => s + c.w, 0) + GAP * (cells.length - 1);
+      cells[cells.length - 1].w += W - used;
+      rows.push(cells);
       row = []; arSum = 0;
     }
   }
   if (row.length) {
-    const h = Math.min(th, (width - GAP * (row.length - 1)) / arSum);
+    const h = Math.min(th, (W - GAP * (row.length - 1)) / arSum);
     rows.push(row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) })));
   }
   return rows;
@@ -75,7 +79,8 @@ function debounce(fn, ms) {
 function render() {
   const grid = $('grid');
   grid.textContent = '';
-  const width = grid.clientWidth || 900;
+  const cs = getComputedStyle(grid);
+  const width = (grid.clientWidth || 900) - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
   const th = targetRowH();
 
   const groups = new Map();

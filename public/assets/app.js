@@ -189,11 +189,14 @@ function groupByDay(list) {
 const GAP = 4;
 const targetRowH = () => {
   const base = DENSITY[density] || 200;
-  return window.innerWidth < 700 ? Math.round(base * 0.58) : base;
+  return window.innerWidth < 700 ? Math.round(base * 0.62) : base;
 };
-const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
+// Fără dimensiuni reale (video fără ffprobe) folosim un raport moderat ca să nu
+// domine grila.
+const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 1.4 : 1);
 
 function justify(items, width, th) {
+  const W = Math.floor(width);
   const rows = [];
   let row = [];
   let arSum = 0;
@@ -201,23 +204,34 @@ function justify(items, width, th) {
     const ar = Math.max(0.4, Math.min(3.4, aspect(it)));
     row.push({ it, ar });
     arSum += ar;
-    if (arSum * th + GAP * (row.length - 1) >= width) {
-      const h = (width - GAP * (row.length - 1)) / arSum;
-      rows.push(row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) })));
+    if (arSum * th + GAP * (row.length - 1) >= W) {
+      const h = (W - GAP * (row.length - 1)) / arSum;
+      const cells = row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) }));
+      // Corectează eroarea de rotunjire pe ultima celulă: rândul plin trebuie
+      // să încapă fix în lățime, altfel se taie pe telefon.
+      const used = cells.reduce((s, c) => s + c.w, 0) + GAP * (cells.length - 1);
+      cells[cells.length - 1].w += W - used;
+      rows.push(cells);
       row = []; arSum = 0;
     }
   }
   if (row.length) {
-    const h = Math.min(th, (width - GAP * (row.length - 1)) / arSum);
+    const h = Math.min(th, (W - GAP * (row.length - 1)) / arSum);
     rows.push(row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) })));
   }
   return rows;
 }
 
+function contentWidth(el) {
+  const cs = getComputedStyle(el);
+  const w = el.clientWidth || (el.parentElement && el.parentElement.clientWidth) || 900;
+  return w - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+}
+
 function buildGallery(container, list) {
   container._list = list;
   container.textContent = '';
-  const width = container.clientWidth || container.parentElement.clientWidth || 900;
+  const width = contentWidth(container);
   const th = targetRowH();
 
   const frag = document.createDocumentFragment();
