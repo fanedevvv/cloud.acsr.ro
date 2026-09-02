@@ -187,13 +187,12 @@ function sendThumb(row, res) {
   if (!row.has_thumb || !fs.existsSync(p)) {
     res.set('Cache-Control', 'private, max-age=3600');
     res.type('image/svg+xml');
-    return res.send(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">` +
-      `<rect width="100%" height="100%" fill="#e8eaed"/>` +
-      `<text x="50%" y="53%" font-size="90" text-anchor="middle" dominant-baseline="middle" fill="#9aa0a6">` +
-      (row.type === 'video' ? '&#9654;' : '&#128247;') +
-      `</text></svg>`
-    );
+    // Fundal transparent (culoarea plăcii vine din temă). Pentru video, badge-ul ▶
+    // e desenat de client, deci lăsăm SVG-ul gol.
+    const glyph = row.type === 'video'
+      ? ''
+      : `<text x="50%" y="54%" font-size="84" text-anchor="middle" dominant-baseline="middle" fill="#9aa0a6" opacity="0.6">&#128247;</text>`;
+    return res.send(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">${glyph}</svg>`);
   }
   res.set('Cache-Control', 'private, max-age=86400');
   res.type('image/webp');
