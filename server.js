@@ -281,7 +281,8 @@ app.get('/api/stats', requireAuth, (req, res) => {
   const usedBytes = db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get().s;
   let totalBytes = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB * 1e9 : 0;
   if (!totalBytes) {
-    try { const st = fs.statfsSync(DATA_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
+    // spațiul volumului unde stau efectiv pozele (poate fi alt disc / NFS)
+    try { const st = fs.statfsSync(ORIGINAL_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
   }
   const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL').get().n;
   res.json({ usedBytes, totalBytes, count });
