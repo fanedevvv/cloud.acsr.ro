@@ -31,9 +31,7 @@ const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
 
 const PORT = Number(process.env.PORT) || 3000;
-const PASSWORD_HASH = process.env.PASSWORD_HASH || '';
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
-const ADMIN_USER = (process.env.ADMIN_USER || 'admin').toLowerCase();
+const PASSWORD_HASH = process.env.PASSWORD_HASH || ''; // parola de administrator
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
@@ -43,9 +41,6 @@ if (!PASSWORD_HASH || !SESSION_SECRET) {
   console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
   console.error('  Rulează:  npm run set-password -- PAROLA_TA\n');
   process.exit(1);
-}
-if (!ADMIN_PASSWORD_HASH) {
-  console.warn('  (fără ADMIN_PASSWORD_HASH — contul de admin e dezactivat; rulează: npm run set-admin -- PAROLA)');
 }
 
 const app = express();
@@ -87,15 +82,9 @@ app.use(session({
 }));
 
 // ─── Helpers auth / CSRF ─────────────────────────────────────────────────────
-function requireAuth(req, res, next) {
-  if (req.session && req.session.authed) return next();
-  return res.status(401).json({ error: 'neautentificat' });
-}
-
-function requireAuthPage(req, res, next) {
-  if (req.session && req.session.authed) return next();
-  return res.redirect('/login');
-}
+// Acces liber: oricine poate vedea și adăuga. Doar ștergerea cere admin.
+function requireAuth(req, res, next) { next(); }
+function requireAuthPage(req, res, next) { next(); }
 
 function requireAdmin(req, res, next) {
   if (req.session && req.session.authed && req.session.role === 'admin') return next();
@@ -261,25 +250,17 @@ const loginLimiter = rateLimit({
 });
 
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
-  const username = String(req.body && req.body.username || '').trim().toLowerCase();
   const password = String(req.body && req.body.password || '');
-
-  let role = null;
-  if (username && username === ADMIN_USER) {
-    if (ADMIN_PASSWORD_HASH) {
-      try { if (await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) role = 'admin'; } catch { /* */ }
-    }
-  } else if (!username) {
-    try { if (await bcrypt.compare(password, PASSWORD_HASH)) role = 'user'; } catch { /* */ }
-  }
-  if (!role) return res.status(401).json({ error: 'date de autentificare greșite' });
+  let ok = false;
+  try { ok = await bcrypt.compare(password, PASSWORD_HASH); } catch { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
 
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
-    req.session.role = role;
+    req.session.role = 'admin';
     req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.save(() => res.json({ ok: true, role }));
+    req.session.save(() => res.json({ ok: true, role: 'admin' }));
   });
 });
 
@@ -290,8 +271,9 @@ app.post('/api/logout', (req, res) => {
   });
 });
 
-app.get('/api/csrf', requireAuth, (req, res) => {
-  res.json({ token: req.session.csrf, role: req.session.role || 'user' });
+app.get('/api/csrf', (req, res) => {
+  if (!req.session.csrf) req.session.csrf = crypto.randomBytes(32).toString('hex');
+  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest' }));
 });
 
 // ─── Listă media ────────────────────────────────────────────────────────────
@@ -449,12 +431,17 @@ app.post('/api/trash/empty', requireAdmin, checkCsrf, (req, res) => {
 });
 
 // ─── Upload ─────────────────────────────────────────────────────────────────
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 400,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'prea multe încărcări, reîncearcă mai târziu' },
+});
 const upload = multer({
   dest: TMP_DIR,
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 50 },
 });
 
-app.post('/api/upload', requireAuth, checkCsrf, upload.array('files', 50), async (req, res, next) => {
+app.post('/api/upload', uploadLimiter, checkCsrf, upload.array('files', 50), async (req, res, next) => {
   try {
     const items = [];
     for (const file of req.files || []) {
@@ -474,14 +461,14 @@ app.post('/api/upload', requireAuth, checkCsrf, upload.array('files', 50), async
 // ─── Import Google Photos Takeout (.zip) ────────────────────────────────────
 const importUpload = multer({ dest: TMP_DIR, limits: { fileSize: 60 * 1024 * 1024 * 1024, files: 1 } });
 
-app.post('/api/import/takeout', requireAuth, checkCsrf, importUpload.single('file'), (req, res) => {
+app.post('/api/import/takeout', requireAdmin, checkCsrf, importUpload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'lipsește fișierul' });
   const job = takeout.newJob();
   takeout.runImport(req.file.path, job).catch((e) => console.error('import:', e));
   res.json({ jobId: job.id });
 });
 
-app.get('/api/import/status/:id', requireAuth, (req, res) => {
+app.get('/api/import/status/:id', requireAdmin, (req, res) => {
   const job = takeout.jobs.get(String(req.params.id));
   if (!job) return res.status(404).json({ error: 'job necunoscut' });
   res.json(job);

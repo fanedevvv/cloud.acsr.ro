@@ -6,8 +6,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "start": "node server.js",
-    "set-password": "node tools/set-password.js",
-    "set-admin": "node tools/set-admin.js"
+    "set-password": "node tools/set-password.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",

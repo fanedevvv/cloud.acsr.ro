@@ -133,14 +133,16 @@ function updateThemeColor() {
 
 function applyRole() {
   document.body.classList.toggle('is-admin', isAdmin);
+  const hide = (id, cond) => { const e = document.getElementById(id); if (e) e.hidden = cond; };
   const tl = document.querySelector('.side-link[data-view="trash"]');
   if (tl) tl.hidden = !isAdmin;
-  const ob = document.getElementById('optimizeBtn');
-  if (ob) ob.hidden = !isAdmin;
-  const ad = document.getElementById('albumDelete');
-  if (ad) ad.hidden = !isAdmin;
+  hide('optimizeBtn', !isAdmin);
+  hide('albumDelete', !isAdmin);
+  hide('importBtn', !isAdmin);
+  hide('logoutBtn', !isAdmin);
+  hide('adminLoginBtn', isAdmin);
   const av = document.getElementById('acctBtn');
-  if (av) { av.textContent = isAdmin ? 'A' : 'C'; av.title = isAdmin ? 'Admin' : 'Cont'; }
+  if (av) { av.textContent = isAdmin ? 'A' : 'C'; av.title = isAdmin ? 'Administrator' : 'Vizitator'; }
 }
 
 // ─── Router ─────────────────────────────────────────────────────────────────
