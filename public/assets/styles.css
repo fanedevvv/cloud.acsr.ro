@@ -532,3 +532,42 @@ body.selecting .chk { opacity: 1; }
 
 .storage-fill.full { background: var(--danger); }
 .opt-check { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 6px 0 4px; cursor: pointer; }
+
+
+/* SHARE PAGE v18 — album public în stil Google Photos */
+.sh-top {
+  position: sticky; top: 0; z-index: 20; height: 64px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.sh-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); font-size: 20px; font-weight: 500; }
+.sh-brand .mark { width: 28px; height: 28px; }
+.sh-brand.small { font-size: 15px; color: var(--text-dim); }
+.sh-brand.small .mark { width: 22px; height: 22px; }
+
+.sh-page { max-width: 1720px; margin: 0 auto; min-height: 60vh; }
+.sh-hero { padding: 30px 24px 6px; }
+.sh-hero h1 { margin: 0; font-weight: 400; letter-spacing: -.5px; font-size: clamp(24px, 3.4vw, 34px); }
+.sh-sub { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-dim); }
+.sh-sub .msi { font-size: 18px; }
+
+.sh-grid { padding: 8px 12px 8px; }
+.sh-grid .j-row { gap: 3px; margin-bottom: 3px; }
+.sh-grid .j-day { margin-bottom: 10px; }
+.sh-grid .j-dayhead { margin: 20px 4px 10px; }
+.sh-grid .j-dayhead .daylabel { font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.sh-grid .j-tile { border-radius: 0; }
+
+.sh-loading { display: grid; place-items: center; padding: 120px 0; color: var(--text-dim); }
+.sh-loading .msi { font-size: 42px; animation: sh-spin 1s linear infinite; }
+@keyframes sh-spin { to { transform: rotate(360deg); } }
+
+.sh-foot { display: grid; place-items: center; padding: 44px 0 52px; }
+
+.lb-count { color: #fff; font-size: 14px; margin-left: 4px; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
+
+@media (max-width: 600px) {
+  .sh-top { padding: 0 12px; }
+  .sh-hero { padding: 20px 16px 4px; }
+  .sh-grid { padding: 6px 6px 8px; }
+}

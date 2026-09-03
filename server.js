@@ -651,13 +651,44 @@ function shareMediaGuard(req, res, next) {
 app.get('/s/:token/media/:id/thumb', shareLimiter, shareMediaGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/s/:token/media/:id/full', shareLimiter, shareMediaGuard, (req, res) => sendFull(req.mediaRow, res));
 
+const SHARE_HTML_PATH = path.join(__dirname, 'public', 'share.html');
+const htmlEsc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 app.get('/s/:token', shareLimiter, (req, res) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
   res.set('Cache-Control', 'no-store');
-  if (!getSharedAlbum(req.params.token)) {
-    return res.status(404).sendFile(path.join(__dirname, 'public', 'share.html'));
-  }
-  res.sendFile(path.join(__dirname, 'public', 'share.html'));
+  res.type('html');
+
+  let html;
+  try { html = fs.readFileSync(SHARE_HTML_PATH, 'utf8'); }
+  catch { return res.status(500).end(); }
+
+  const a = getSharedAlbum(req.params.token);
+  if (!a) return res.status(404).send(html.replace('<!--OG-->', ''));
+
+  const agg = db.prepare(`
+    SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+  `).get(a.id);
+  const cover = db.prepare(`
+    SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
+  `).get(a.id);
+
+  const url = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
+  const desc = agg.n + (agg.n === 1 ? ' element' : ' elemente') + ' · album partajat';
+  const og = [
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Cloud">',
+    '<meta property="og:title" content="' + htmlEsc(a.name) + '">',
+    '<meta property="og:description" content="' + htmlEsc(desc) + '">',
+    cover ? '<meta property="og:image" content="' + url + '/media/' + cover.id + '/thumb">' : '',
+    '<meta property="og:url" content="' + htmlEsc(url) + '">',
+    '<meta name="twitter:card" content="summary_large_image">',
+  ].filter(Boolean).join('\n  ');
+
+  res.send(html.replace('<!--OG-->', og));
 });
 
 // ─── Partajare publică: o singură poză ─────────────────────────────────────
