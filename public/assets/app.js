@@ -9,7 +9,14 @@ const EMPTY = {
   archive: 'Arhiva e goală.',
   trash: 'Coșul e gol.',
 };
-const DENSITY = { s: 132, m: 200, l: 284 };
+// Niveluri de zoom pe grilă (ca la Google Photos): mare → confortabil → compact → mic
+const ZOOM = [
+  { rowH: 340, group: 'day' },
+  { rowH: 210, group: 'day' },
+  { rowH: 124, group: 'month' },
+  { rowH: 70, group: 'month', bare: true },
+];
+const ZOOM_LABEL = ['Mare', 'Confortabil', 'Compact', 'Mic'];
 
 let csrf = '';
 let media = [];
@@ -24,7 +31,8 @@ let filterType = 'all';
 let filterFav = false;
 let filterYear = '';
 let filterCat = ''; // '', 'screenshots', 'selfies', 'geo'
-let density = 'm';
+let gridZoom = 1;
+let lastSelId = null; // pentru selecție cu Shift pe interval
 let placesMap = null;
 let placesLayer = null;
 let cur = { view: 'all', albumId: null, album: null, items: [] };
@@ -36,7 +44,11 @@ let slideTimer = null;
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
 (async function init() {
-  try { density = localStorage.getItem('density') || 'm'; } catch {}
+  try {
+    const z = localStorage.getItem('gridZoom');
+    if (z != null) gridZoom = Math.max(0, Math.min(3, parseInt(z, 10) || 0));
+    else { const d = localStorage.getItem('density'); gridZoom = d === 'l' ? 0 : d === 's' ? 2 : 1; }
+  } catch {}
   try {
     const r = await fetch('/api/csrf');
     if (r.status === 401) return location.replace('/login');
@@ -218,20 +230,28 @@ function dayLabel(iso) {
     : { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function groupByDay(list) {
+function groupBy(list, by) {
   const groups = new Map();
+  const n = by === 'month' ? 7 : 10;
   for (const it of list) {
-    const k = (it.takenAt || it.createdAt).slice(0, 10);
+    const k = (it.takenAt || it.createdAt).slice(0, n);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(it);
   }
   return groups;
 }
 
+function monthLabel(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  return cap(d.toLocaleDateString('ro-RO', d.getFullYear() === now.getFullYear()
+    ? { month: 'long' } : { month: 'long', year: 'numeric' }));
+}
+
 // ─── Layout justified ──────────────────────────────────────────────────────
 const GAP = 4;
 const targetRowH = () => {
-  const base = DENSITY[density] || 200;
+  const base = (ZOOM[gridZoom] || ZOOM[1]).rowH;
   return window.innerWidth < 700 ? Math.round(base * 0.62) : base;
 };
 // Fără dimensiuni reale (video fără ffprobe) folosim un raport moderat ca să nu
@@ -274,14 +294,16 @@ function contentWidth(el) {
 function buildGallery(container, list) {
   container._list = list;
   container.textContent = '';
+  container.dataset.zoom = String(gridZoom);
   const width = contentWidth(container);
   const th = targetRowH();
 
+  const z = ZOOM[gridZoom] || ZOOM[1];
   const frag = document.createDocumentFragment();
-  for (const [, items] of groupByDay(list)) {
+  for (const [, items] of groupBy(list, z.group)) {
     const day = document.createElement('section');
     day.className = 'j-day';
-    day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id)));
+    day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id), z.group));
     for (const r of justify(items, width, th)) {
       const rowEl = document.createElement('div');
       rowEl.className = 'j-row';
@@ -293,7 +315,7 @@ function buildGallery(container, list) {
   container.appendChild(frag);
 }
 
-function dayHead(dateIso, ids) {
+function dayHead(dateIso, ids, by) {
   const wrap = document.createElement('div');
   wrap.className = 'j-dayhead';
   const chk = document.createElement('span');
@@ -307,7 +329,7 @@ function dayHead(dateIso, ids) {
   });
   const lbl = document.createElement('span');
   lbl.className = 'daylabel';
-  lbl.textContent = dayLabel(dateIso);
+  lbl.textContent = by === 'month' ? monthLabel(dateIso) : dayLabel(dateIso);
   wrap.appendChild(chk);
   wrap.appendChild(lbl);
   return wrap;
@@ -339,7 +361,7 @@ function jtile(cell) {
 
   const chk = document.createElement('span');
   chk.className = 'chk';
-  chk.addEventListener('click', (e) => { e.stopPropagation(); toggleSelect(it.id); });
+  chk.addEventListener('click', (e) => { e.stopPropagation(); pickTile(it.id, e.shiftKey); });
   b.appendChild(chk);
 
   if (cur.view !== 'trash') {
@@ -352,11 +374,29 @@ function jtile(cell) {
     b.appendChild(fav);
   }
 
-  b.addEventListener('click', () => {
-    if (selected.size > 0) toggleSelect(it.id);
+  b.addEventListener('click', (e) => {
+    if (selected.size > 0 || e.shiftKey) pickTile(it.id, e.shiftKey);
     else openLightbox(gridData(), it.id);
   });
   return b;
+}
+
+// Click pe bifă / cu Shift: selecție simplă sau pe interval (ordinea din grilă)
+function pickTile(id, shift) {
+  const order = gridData().map((x) => x.id);
+  if (shift && lastSelId && order.includes(lastSelId) && order.includes(id)) {
+    let a = order.indexOf(lastSelId), b = order.indexOf(id);
+    if (a > b) [a, b] = [b, a];
+    for (let i = a; i <= b; i++) selected.add(order[i]);
+    document.querySelectorAll('.j-tile').forEach((el) => {
+      if (selected.has(el.dataset.id)) el.classList.add('sel');
+    });
+    syncDayChecks();
+    updateSelBar();
+  } else {
+    toggleSelect(id);
+  }
+  lastSelId = id;
 }
 
 function applySearch(list) {
@@ -534,6 +574,18 @@ function rerender() {
   else if (cur.view === 'shares') renderShares();
 }
 
+function setZoom(z) {
+  gridZoom = Math.max(0, Math.min(ZOOM.length - 1, z));
+  try { localStorage.setItem('gridZoom', String(gridZoom)); } catch {}
+  const btn = $('densityBtn');
+  if (btn) {
+    btn.title = 'Zoom grilă: ' + ZOOM_LABEL[gridZoom];
+    const ic = btn.querySelector('.msi');
+    if (ic) ic.textContent = gridZoom >= 2 ? 'grid_on' : gridZoom === 0 ? 'view_comfy' : 'grid_view';
+  }
+  rerender();
+}
+
 function observeResize() {
   let t;
   const ro = new ResizeObserver(() => {
@@ -581,6 +633,7 @@ function syncDayChecks() {
   });
 }
 function clearSel() {
+  lastSelId = null;
   if (!selected.size) { updateSelBar(); return; }
   selected.clear();
   document.querySelectorAll('.j-tile.sel').forEach((el) => el.classList.remove('sel'));
@@ -1269,11 +1322,16 @@ function wire() {
     location.replace('/login');
   };
 
-  $('densityBtn').onclick = () => {
-    density = density === 'm' ? 'l' : density === 'l' ? 's' : 'm';
-    try { localStorage.setItem('density', density); } catch {}
-    rerender();
-  };
+  $('densityBtn').onclick = () => setZoom((gridZoom + 1) % 4);
+  setZoom(gridZoom); // aplică titlul + iconița
+
+  // Ctrl/Cmd + rotița mouse-ului = zoom pe grilă
+  window.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!FLAT.includes(cur.view) && cur.view !== 'album') return;
+    e.preventDefault();
+    setZoom(gridZoom + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: false });
   $('helpBtn').onclick = () => { $('helpModal').hidden = false; };
   $('helpClose').onclick = () => { $('helpModal').hidden = true; };
 
@@ -1430,7 +1488,19 @@ function wire() {
       }
       return;
     }
+    const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.key === '?') { $('helpModal').hidden = false; return; }
+    if (!typing && (e.key === '+' || e.key === '=')) { setZoom(gridZoom - 1); return; }
+    if (!typing && (e.key === '-' || e.key === '_')) { setZoom(gridZoom + 1); return; }
+    if (!typing && e.key === 'a' && (e.ctrlKey || e.metaKey) && FLAT.includes(cur.view)) {
+      e.preventDefault();
+      const all = gridData();
+      const allSel = all.length && all.every((x) => selected.has(x.id));
+      for (const x of all) { if (allSel) selected.delete(x.id); else selected.add(x.id); }
+      lastSelId = all.length ? all[all.length - 1].id : null;
+      updateSelBar(); rerender();
+      return;
+    }
     if (e.key === 'Escape') {
       if (!$('shareModal').hidden) $('shareModal').hidden = true;
       else if (!$('pickerModal').hidden) $('pickerModal').hidden = true;
