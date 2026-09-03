@@ -26,7 +26,7 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes } = require('./lib/media');
+const { backfillHashes, backfillExif } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
 
@@ -52,7 +52,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
-      'img-src': ["'self'", 'data:', 'blob:'],
+      'img-src': ["'self'", 'data:', 'blob:', 'https://*.tile.openstreetmap.org'],
       'media-src': ["'self'", 'blob:'],
       'upgrade-insecure-requests': null, // ca să meargă și pe http local
     },
@@ -136,7 +136,9 @@ const jsonBody = express.json({ limit: '256kb' });
 const MEDIA_COLS = `
   id, type, mime, original_name AS originalName, width, height, size,
   duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt,
-  favorite, archived, caption, deleted_at AS deletedAt, share_token AS shareToken
+  favorite, archived, caption, deleted_at AS deletedAt, share_token AS shareToken,
+  lat, lon, place, camera, lens, iso, f_number AS fNumber, exposure, focal,
+  kind_auto AS kindAuto
 `;
 
 const mapRow = (r) => ({
@@ -145,6 +147,7 @@ const mapRow = (r) => ({
   favorite: !!r.favorite,
   archived: !!r.archived,
   shareToken: r.shareToken || null,
+  hasGeo: r.lat != null && r.lon != null,
 });
 
 function getSharedPhoto(token) {
@@ -309,13 +312,41 @@ app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;
   let order = 'ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC';
+  const live = 'deleted_at IS NULL AND archived = 0';
   if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND favorite = 1';
   else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1';
   else if (f === 'trash') { where = 'deleted_at IS NOT NULL'; order = 'ORDER BY deleted_at DESC'; }
-  else where = 'deleted_at IS NULL AND archived = 0';
+  else if (f === 'videos') where = live + " AND type = 'video'";
+  else if (f === 'screenshots') where = live + " AND kind_auto = 'screenshot'";
+  else if (f === 'selfies') where = live + " AND kind_auto = 'selfie'";
+  else if (f === 'geo') where = live + ' AND lat IS NOT NULL';
+  else where = live;
 
   const rows = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
   res.json(rows.map(mapRow));
+});
+
+// „Locuri" — toate mediile geotag-uite, pentru vizualizarea pe hartă
+app.get('/api/places', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, type, lat, lon, place, taken_at AS takenAt, created_at AS createdAt
+    FROM media
+    WHERE deleted_at IS NULL AND archived = 0 AND lat IS NOT NULL AND lon IS NOT NULL
+    ORDER BY COALESCE(taken_at, created_at) DESC
+  `).all();
+  res.json(rows);
+});
+
+// „Categorii" — câte elemente în fiecare secțiune automată
+app.get('/api/categories', requireAuth, (req, res) => {
+  const live = 'deleted_at IS NULL AND archived = 0';
+  const one = (w) => db.prepare(`SELECT COUNT(*) n FROM media WHERE ${live} AND ${w}`).get().n;
+  res.json({
+    videos: one("type = 'video'"),
+    screenshots: one("kind_auto = 'screenshot'"),
+    selfies: one("kind_auto = 'selfie'"),
+    geo: one('lat IS NOT NULL'),
+  });
 });
 
 // „Amintiri” — poze din aceeași zi calendaristică, din anii trecuți
@@ -783,4 +814,5 @@ app.listen(PORT, '127.0.0.1', () => {
   // în fundal: generează postere pentru clipurile fără thumbnail
   Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
   Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
+  Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
 });

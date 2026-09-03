@@ -23,7 +23,10 @@ let query = '';
 let filterType = 'all';
 let filterFav = false;
 let filterYear = '';
+let filterCat = ''; // '', 'screenshots', 'selfies', 'geo'
 let density = 'm';
+let placesMap = null;
+let placesLayer = null;
 let cur = { view: 'all', albumId: null, album: null, items: [] };
 
 const selected = new Set();
@@ -149,6 +152,7 @@ function applyRole() {
 function route() {
   clearSel();
   stopSlideshow();
+  if (!lb.hidden) closeLightbox();
   const h = location.hash.replace(/^#/, '');
   const m = h.match(/^\/album\/([0-9a-f-]{36})$/i);
 
@@ -164,6 +168,10 @@ function route() {
     cur.view = 'shares';
     showView();
     loadAlbums().then(renderShares);
+  } else if (h === '/places') {
+    cur.view = 'places';
+    showView();
+    renderPlaces();
   } else if (h === '/highlights') {
     cur.view = 'highlights'; showView(); renderGrid();
   } else if (h === '/archive') {
@@ -182,6 +190,7 @@ function showView() {
   $('viewAlbums').hidden = cur.view !== 'albums';
   $('viewShares').hidden = cur.view !== 'shares';
   $('viewAlbum').hidden = cur.view !== 'album';
+  $('viewPlaces').hidden = cur.view !== 'places';
 }
 
 function updateNav() {
@@ -364,6 +373,9 @@ function applyFilters(list) {
   return list.filter((m) => {
     if (filterType !== 'all' && m.type !== filterType) return false;
     if (filterFav && !m.favorite) return false;
+    if (filterCat === 'screenshots' && m.kindAuto !== 'screenshot') return false;
+    if (filterCat === 'selfies' && m.kindAuto !== 'selfie') return false;
+    if (filterCat === 'geo' && !m.hasGeo) return false;
     if (filterYear && String(new Date(m.takenAt || m.createdAt).getFullYear()) !== filterYear) return false;
     return true;
   });
@@ -397,6 +409,7 @@ function renderChips() {
   $('chips').hidden = !show;
   if (!show) return;
   document.querySelectorAll('.chip[data-type]').forEach((b) => b.classList.toggle('on', b.dataset.type === filterType));
+  document.querySelectorAll('.chip[data-cat]').forEach((b) => b.classList.toggle('on', b.dataset.cat === filterCat));
   $('chipFav').classList.toggle('on', filterFav);
   const sel = $('chipYear');
   const src = cur.view === 'highlights' ? media.filter((m) => m.favorite) : cur.view === 'archive' ? archiveList : media;
@@ -853,6 +866,7 @@ function openLightbox(list, id) {
 function closeLightbox() {
   resetZoom();
   stopSlideshow();
+  destroyInfoMap();
   lb.hidden = true;
   lb.classList.remove('has-info');
   $('lbInfo').hidden = true;
@@ -1008,7 +1022,18 @@ function renderInfo() {
   if (it.originalName) rows.push(['image', it.originalName]);
   if (it.width && it.height) rows.push(['straighten', it.width + ' × ' + it.height + '  ·  ' + (it.width * it.height / 1e6).toFixed(1) + ' MP']);
   if (it.size) rows.push(['sd_card', sizeStr(it.size)]);
+  if (it.type === 'video' && it.duration) rows.push(['schedule', fmtDur(it.duration)]);
   rows.push([it.type === 'video' ? 'movie' : 'photo_camera', it.type === 'video' ? 'Videoclip' : 'Fotografie']);
+  if (it.camera) rows.push(['photo_camera', it.camera]);
+  if (it.lens) rows.push(['camera', it.lens]);
+  const shot = [];
+  if (it.fNumber) shot.push('ƒ/' + it.fNumber);
+  if (it.exposure) shot.push(it.exposure);
+  if (it.iso) shot.push('ISO ' + it.iso);
+  if (it.focal) shot.push(it.focal + ' mm');
+  if (shot.length) rows.push(['tune', shot.join('  ·  ')]);
+  if (it.kindAuto === 'screenshot') rows.push(['screenshot', 'Captură de ecran']);
+  if (it.kindAuto === 'selfie') rows.push(['face', 'Selfie']);
   if (it.favorite) rows.push(['star', 'La favorite']);
   for (const [ic, txt] of rows) {
     const row = document.createElement('div');
@@ -1022,6 +1047,76 @@ function renderInfo() {
     row.appendChild(s);
     body.appendChild(row);
   }
+
+  destroyInfoMap();
+  if (it.lat != null && it.lon != null && window.L) {
+    if (it.place) {
+      const row = document.createElement('div');
+      row.className = 'info-row';
+      row.innerHTML = '<span class="msi">location_on</span><span>' + escapeHtml(it.place) + '</span>';
+      body.appendChild(row);
+    }
+    const mp = document.createElement('div');
+    mp.className = 'info-map';
+    body.appendChild(mp);
+    infoMap = L.map(mp, { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, tap: false })
+      .setView([it.lat, it.lon], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(infoMap);
+    L.marker([it.lat, it.lon]).addTo(infoMap);
+    mp.onclick = () => { location.hash = '#/places'; };
+    requestAnimationFrame(() => { if (infoMap) infoMap.invalidateSize(); });
+  }
+}
+
+let infoMap = null;
+function destroyInfoMap() { if (infoMap) { infoMap.remove(); infoMap = null; } }
+
+function fmtDur(sec) {
+  sec = Math.round(sec);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// ─── Locuri (hartă) ────────────────────────────────────────────────────────
+async function renderPlaces() {
+  updateNav();
+  let pts = [];
+  try { pts = await api('/api/places'); } catch { pts = []; }
+  $('placesCount').textContent = pts.length
+    ? pts.length + (pts.length === 1 ? ' element cu locație' : ' elemente cu locație') : '';
+  $('placesEmpty').hidden = pts.length > 0;
+  $('map').hidden = pts.length === 0;
+  if (!pts.length || !window.L) return;
+
+  if (!placesMap) {
+    placesMap = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap',
+    }).addTo(placesMap);
+  }
+  if (placesLayer) placesLayer.remove();
+  placesLayer = (L.markerClusterGroup ? L.markerClusterGroup({ maxClusterRadius: 46 }) : L.layerGroup());
+
+  const bounds = [];
+  for (const p of pts) {
+    const m = L.marker([p.lat, p.lon]);
+    const img = document.createElement('img');
+    img.src = '/media/' + p.id + '/thumb';
+    img.className = 'map-pop';
+    img.loading = 'lazy';
+    img.onclick = () => openLightbox(pts, p.id);
+    m.bindPopup(img, { minWidth: 160, closeButton: false });
+    placesLayer.addLayer(m);
+    bounds.push([p.lat, p.lon]);
+  }
+  placesMap.addLayer(placesLayer);
+  requestAnimationFrame(() => {
+    placesMap.invalidateSize();
+    if (bounds.length) placesMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  });
 }
 
 function toggleInfo() {
@@ -1370,6 +1465,9 @@ function wire() {
     b.onclick = () => { filterType = b.dataset.type; renderGrid(); };
   });
   $('chipFav').onclick = () => { filterFav = !filterFav; renderGrid(); };
+  document.querySelectorAll('.chip[data-cat]').forEach((b) => {
+    b.onclick = () => { filterCat = filterCat === b.dataset.cat ? '' : b.dataset.cat; renderGrid(); };
+  });
   $('chipYear').onchange = (e) => { filterYear = e.target.value; renderGrid(); };
 
   // cod QR în fereastra de partajare

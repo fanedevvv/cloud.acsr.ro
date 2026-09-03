@@ -11,7 +11,10 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20">
+  <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
+  <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=21">
 </head>
 <body>
   <div class="app">
@@ -24,6 +27,7 @@
         <a class="side-link" href="#/" data-view="all"><span class="msi">image</span><span class="lbl">Poze</span></a>
         <a class="side-link" href="#/highlights" data-view="highlights"><span class="msi">star</span><span class="lbl">Favorite</span></a>
         <a class="side-link" href="#/albums" data-view="albums"><span class="msi">photo_album</span><span class="lbl">Albume</span></a>
+        <a class="side-link" href="#/places" data-view="places"><span class="msi">map</span><span class="lbl">Locuri</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
@@ -88,6 +92,10 @@
           <button class="chip" data-type="image" type="button">Foto</button>
           <button class="chip" data-type="video" type="button">Video</button>
           <button id="chipFav" class="chip" data-fav="1" type="button"><span class="msi">star</span>Favorite</button>
+          <span class="chip-div"></span>
+          <button class="chip" data-cat="screenshots" type="button"><span class="msi">screenshot</span>Capturi</button>
+          <button class="chip" data-cat="selfies" type="button"><span class="msi">face</span>Selfie</button>
+          <button class="chip" data-cat="geo" type="button"><span class="msi">location_on</span>Cu locație</button>
           <select id="chipYear" class="chip-year"><option value="">Toți anii</option></select>
         </div>
         <div id="memStrip" class="mem-strip" hidden></div>
@@ -112,6 +120,12 @@
         <div class="section-head"><h1>Partajări</h1></div>
         <div id="sharesGrid" class="albums-grid"></div>
         <div id="sharesEmpty" class="empty" hidden><span class="msi big">group</span><p>Niciun album partajat.</p></div>
+      </main>
+
+      <main id="viewPlaces" class="view view-places" hidden>
+        <div class="section-head"><h1>Locuri</h1><div class="spacer"></div><span id="placesCount" class="muted"></span></div>
+        <div id="map" class="map"></div>
+        <div id="placesEmpty" class="empty" hidden><span class="msi big">map</span><p>Nicio poză cu locație încă.</p><p class="muted">Pozele cu GPS din EXIF apar aici pe hartă.</p></div>
       </main>
 
       <main id="viewAlbum" class="view" hidden>
@@ -262,7 +276,9 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/assets/app.js?v=20"></script>
-  <script src="/assets/pwa.js?v=20"></script>
+  <script src="/assets/vendor/leaflet/leaflet.js"></script>
+  <script src="/assets/vendor/markercluster/markercluster.js"></script>
+  <script src="/assets/app.js?v=21"></script>
+  <script src="/assets/pwa.js?v=21"></script>
 </body>
 </html>
