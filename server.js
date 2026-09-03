@@ -32,6 +32,8 @@ const optimize = require('./lib/optimize');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PASSWORD_HASH = process.env.PASSWORD_HASH || '';
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
+const ADMIN_USER = (process.env.ADMIN_USER || 'admin').toLowerCase();
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
@@ -41,6 +43,9 @@ if (!PASSWORD_HASH || !SESSION_SECRET) {
   console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
   console.error('  Rulează:  npm run set-password -- PAROLA_TA\n');
   process.exit(1);
+}
+if (!ADMIN_PASSWORD_HASH) {
+  console.warn('  (fără ADMIN_PASSWORD_HASH — contul de admin e dezactivat; rulează: npm run set-admin -- PAROLA)');
 }
 
 const app = express();
@@ -90,6 +95,11 @@ function requireAuth(req, res, next) {
 function requireAuthPage(req, res, next) {
   if (req.session && req.session.authed) return next();
   return res.redirect('/login');
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.authed && req.session.role === 'admin') return next();
+  return res.status(403).json({ error: 'necesită cont de administrator' });
 }
 
 // Double-submit: tokenul din sesiune trebuie trimis în antetul X-CSRF-Token.
@@ -251,16 +261,25 @@ const loginLimiter = rateLimit({
 });
 
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
+  const username = String(req.body && req.body.username || '').trim().toLowerCase();
   const password = String(req.body && req.body.password || '');
-  let ok = false;
-  try { ok = await bcrypt.compare(password, PASSWORD_HASH); } catch { ok = false; }
-  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
+
+  let role = null;
+  if (username && username === ADMIN_USER) {
+    if (ADMIN_PASSWORD_HASH) {
+      try { if (await bcrypt.compare(password, ADMIN_PASSWORD_HASH)) role = 'admin'; } catch { /* */ }
+    }
+  } else if (!username) {
+    try { if (await bcrypt.compare(password, PASSWORD_HASH)) role = 'user'; } catch { /* */ }
+  }
+  if (!role) return res.status(401).json({ error: 'date de autentificare greșite' });
 
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
+    req.session.role = role;
     req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.save(() => res.json({ ok: true }));
+    req.session.save(() => res.json({ ok: true, role }));
   });
 });
 
@@ -272,7 +291,7 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/csrf', requireAuth, (req, res) => {
-  res.json({ token: req.session.csrf });
+  res.json({ token: req.session.csrf, role: req.session.role || 'user' });
 });
 
 // ─── Listă media ────────────────────────────────────────────────────────────
@@ -287,7 +306,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
 });
 
 // Optimizare spațiu (recompresie) — job în fundal
-app.post('/api/optimize', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/optimize', requireAdmin, checkCsrf, jsonBody, (req, res) => {
   if (optimize.current() && !optimize.current().finishedAt) {
     return res.status(409).json({ error: 'o optimizare rulează deja' });
   }
@@ -405,21 +424,21 @@ app.get('/qr', requireAuth, async (req, res) => {
 });
 
 // Mută în coș (soft delete) / restaurează
-app.post('/api/media/:id/trash', requireAuth, checkCsrf, (req, res) => {
+app.post('/api/media/:id/trash', requireAdmin, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   db.prepare('UPDATE media SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
   res.json({ ok: true });
 });
 
-app.post('/api/media/:id/restore', requireAuth, checkCsrf, (req, res) => {
+app.post('/api/media/:id/restore', requireAdmin, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
 
-app.post('/api/trash/empty', requireAuth, checkCsrf, (req, res) => {
+app.post('/api/trash/empty', requireAdmin, checkCsrf, (req, res) => {
   const rows = db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL').all();
   for (const r of rows) {
     fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
@@ -482,7 +501,7 @@ app.get('/media/:id/full', requireAuth, (req, res) => {
 });
 
 // ─── Ștergere ───────────────────────────────────────────────────────────────
-app.delete('/api/media/:id', requireAuth, checkCsrf, (req, res) => {
+app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
 
@@ -535,7 +554,7 @@ app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
   res.json(albumSummary(getAlbum(a.id)));
 });
 
-app.delete('/api/albums/:id', requireAuth, checkCsrf, (req, res) => {
+app.delete('/api/albums/:id', requireAdmin, checkCsrf, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items

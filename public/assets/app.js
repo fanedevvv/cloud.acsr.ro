@@ -18,6 +18,7 @@ let trashList = [];
 let albums = [];
 let memories = [];
 let stats = null;
+let isAdmin = false;
 let query = '';
 let filterType = 'all';
 let filterFav = false;
@@ -36,7 +37,9 @@ let slideTimer = null;
   try {
     const r = await fetch('/api/csrf');
     if (r.status === 401) return location.replace('/login');
-    csrf = (await r.json()).token;
+    const info = await r.json();
+    csrf = info.token;
+    isAdmin = info.role === 'admin';
   } catch {
     return location.replace('/login');
   }
@@ -46,6 +49,7 @@ let slideTimer = null;
   window.addEventListener('hashchange', route);
   wire();
   observeResize();
+  applyRole();
   try {
     await Promise.all([loadAll(), loadAlbums()]);
   } catch { /* api() a redirecționat la 401 */ }
@@ -127,6 +131,18 @@ function updateThemeColor() {
   if (m) m.setAttribute('content', dark ? '#131316' : '#ffffff');
 }
 
+function applyRole() {
+  document.body.classList.toggle('is-admin', isAdmin);
+  const tl = document.querySelector('.side-link[data-view="trash"]');
+  if (tl) tl.hidden = !isAdmin;
+  const ob = document.getElementById('optimizeBtn');
+  if (ob) ob.hidden = !isAdmin;
+  const ad = document.getElementById('albumDelete');
+  if (ad) ad.hidden = !isAdmin;
+  const av = document.getElementById('acctBtn');
+  if (av) { av.textContent = isAdmin ? 'A' : 'C'; av.title = isAdmin ? 'Admin' : 'Cont'; }
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 function route() {
   clearSel();
@@ -151,6 +167,7 @@ function route() {
   } else if (h === '/archive') {
     cur.view = 'archive'; showView(); loadArchive().then(renderGrid);
   } else if (h === '/trash') {
+    if (!isAdmin) { location.hash = '#/'; return; }
     cur.view = 'trash'; showView(); loadTrash().then(renderGrid);
   } else {
     cur.view = 'all'; showView(); renderGrid();
@@ -610,7 +627,9 @@ function renderSelActions() {
   box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => {
     location.href = '/api/download?ids=' + [...selected].join(',');
   }));
-  box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+  if (isAdmin) {
+    box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+  }
 }
 
 async function bulk(fn, okMsg) {
@@ -926,7 +945,7 @@ function showLb() {
   const trash = cur.view === 'trash';
   lb.querySelector('.lb-fav').hidden = trash;
   lb.querySelector('.lb-archive').hidden = trash;
-  lb.querySelector('.lb-del').hidden = trash;
+  lb.querySelector('.lb-del').hidden = trash || !isAdmin;
   lb.querySelector('.lb-slideshow').hidden = trash;
   lb.querySelector('.lb-share').hidden = trash;
   lb.querySelector('.lb-restore').hidden = !trash;
@@ -1309,7 +1328,7 @@ function wire() {
       else if (e.key === 'i') toggleInfo();
       else if (e.key === 'f' && cur.view !== 'trash') lbFav();
       else if (e.key === ' ') { e.preventDefault(); toggleSlideshow(); }
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && cur.view !== 'trash') {
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && cur.view !== 'trash' && isAdmin) {
         lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
       }
       return;
