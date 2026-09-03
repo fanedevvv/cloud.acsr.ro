@@ -11,50 +11,29 @@ const lbStrip = $('lbStrip');
 
 let items = [];
 let lbIndex = -1;
+let slideTimer = null;
 
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const fmtDate = (iso, y) => new Date(iso).toLocaleDateString('ro-RO', y
+  ? { day: 'numeric', month: 'long', year: 'numeric' }
+  : { day: 'numeric', month: 'long' });
 
-function fmtDate(iso, withYear) {
-  return new Date(iso).toLocaleDateString('ro-RO', withYear
-    ? { day: 'numeric', month: 'long', year: 'numeric' }
-    : { day: 'numeric', month: 'long' });
-}
 function dateRange(aIso, bIso) {
   if (!aIso) return '';
   const a = new Date(aIso), b = new Date(bIso || aIso);
   if (a.toDateString() === b.toDateString()) return cap(fmtDate(a, true));
   const sameYear = a.getFullYear() === b.getFullYear();
-  if (sameYear && a.getMonth() === b.getMonth()) return a.getDate() + '–' + fmtDate(b, true);
+  if (sameYear && a.getMonth() === b.getMonth()) return a.getDate() + ' – ' + fmtDate(b, true);
   if (sameYear) return fmtDate(a) + ' – ' + fmtDate(b, true);
   return fmtDate(a, true) + ' – ' + fmtDate(b, true);
 }
 
-const GAP = 3;
-const targetRowH = () => (window.innerWidth < 700 ? 116 : 205);
-const aspect = (it) => (it.width && it.height ? it.width / it.height : it.type === 'video' ? 16 / 9 : 1);
-
-function justify(list, width, th) {
-  const W = Math.floor(width);
-  const rows = [];
-  let row = [], arSum = 0;
-  for (const it of list) {
-    const ar = Math.max(0.4, Math.min(3.4, aspect(it)));
-    row.push({ it, ar });
-    arSum += ar;
-    if (arSum * th + GAP * (row.length - 1) >= W) {
-      const h = (W - GAP * (row.length - 1)) / arSum;
-      const cells = row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) }));
-      const used = cells.reduce((s, c) => s + c.w, 0) + GAP * (cells.length - 1);
-      cells[cells.length - 1].w += W - used;
-      rows.push(cells);
-      row = []; arSum = 0;
-    }
-  }
-  if (row.length) {
-    const h = Math.min(th, (W - GAP * (row.length - 1)) / arSum);
-    rows.push(row.map((r) => ({ it: r.it, w: Math.round(r.ar * h), h: Math.round(h) })));
-  }
-  return rows;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.hidden = true; }, 2200);
 }
 
 (async function init() {
@@ -69,105 +48,63 @@ function justify(list, width, th) {
     $('notfound').hidden = false;
     return;
   }
+
   items = data.items || [];
-  document.title = (data.name || 'Album partajat') + ' — Cloud';
-  $('albumTitle').textContent = data.name || 'Album partajat';
+  const name = data.name || 'Album partajat';
+  document.title = name + ' — Cloud';
+  $('albumTitle').textContent = name;
 
-  const n = items.length;
   const dates = items.map((it) => it.takenAt || it.createdAt).sort();
-  const range = dates.length ? dateRange(dates[0], dates[dates.length - 1]) : '';
-  const sub = $('albumSub');
-  sub.textContent = '';
-  const g = document.createElement('span');
-  g.className = 'msi';
-  g.textContent = 'group';
-  sub.appendChild(g);
-  sub.appendChild(document.createTextNode(
-    ' Album partajat  ·  ' + n + (n === 1 ? ' element' : ' elemente') + (range ? '  ·  ' + range : '')
-  ));
+  $('heroDate').textContent = dates.length ? dateRange(dates[0], dates[dates.length - 1]) : '';
 
+  const coverId = data.coverId || (items[0] && items[0].id);
+  if (coverId) {
+    const hi = $('heroImg');
+    hi.src = base + '/media/' + coverId + '/full';
+    hi.onerror = () => { hi.style.display = 'none'; };
+  }
+
+  buildGrid();
   $('loading').hidden = true;
   $('album').hidden = false;
-  $('foot').hidden = false;
-  render();
-  window.addEventListener('resize', debounce(render, 150));
 })();
 
-function debounce(fn, ms) {
-  let t;
-  return () => { clearTimeout(t); t = setTimeout(fn, ms); };
-}
-
-function render() {
+function buildGrid() {
   const grid = $('grid');
   grid.textContent = '';
-  const cs = getComputedStyle(grid);
-  const width = (grid.clientWidth || 900) - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
-  const th = targetRowH();
-
-  const groups = new Map();
-  for (const it of items) {
-    const k = (it.takenAt || it.createdAt).slice(0, 10);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(it);
-  }
-  const multiDay = groups.size > 1;
-
-  for (const [, list] of groups) {
-    const day = document.createElement('section');
-    day.className = 'j-day';
-    if (multiDay) {
-      const head = document.createElement('div');
-      head.className = 'j-dayhead';
-      const lbl = document.createElement('span');
-      lbl.className = 'daylabel';
-      const d0 = new Date(list[0].takenAt || list[0].createdAt);
-      lbl.textContent = cap(fmtDate(d0, d0.getFullYear() !== new Date().getFullYear()));
-      head.appendChild(lbl);
-      day.appendChild(head);
+  const frag = document.createDocumentFragment();
+  items.forEach((it, i) => {
+    const b = document.createElement('button');
+    b.className = 'sq';
+    b.type = 'button';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = base + '/media/' + it.id + '/thumb';
+    b.appendChild(img);
+    if (it.type === 'video') {
+      const s = document.createElement('span');
+      s.className = 'play-badge';
+      s.textContent = '▶';
+      b.appendChild(s);
     }
-    for (const r of justify(list, width, th)) {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'j-row';
-      for (const cell of r) rowEl.appendChild(tile(cell));
-      day.appendChild(rowEl);
-    }
-    grid.appendChild(day);
-  }
+    b.addEventListener('click', () => open(i));
+    frag.appendChild(b);
+  });
+  grid.appendChild(frag);
 }
 
-function tile(cell) {
-  const it = cell.it;
-  const b = document.createElement('button');
-  b.className = 'j-tile';
-  b.type = 'button';
-  b.style.width = cell.w + 'px';
-  b.style.height = cell.h + 'px';
-  const img = document.createElement('img');
-  img.loading = 'lazy';
-  img.decoding = 'async';
-  img.src = base + '/media/' + it.id + '/thumb';
-  b.appendChild(img);
-  if (it.type === 'video') {
-    const s = document.createElement('span');
-    s.className = 'play-badge';
-    s.textContent = '▶';
-    b.appendChild(s);
-  }
-  b.addEventListener('click', () => open(it.id));
-  return b;
-}
-
-
-function open(id) {
-  lbIndex = items.findIndex((x) => x.id === id);
-  if (lbIndex < 0) return;
+// ─── Lightbox ─────────────────────────────────────────────────────────────
+function open(i) {
+  lbIndex = i;
+  if (lbIndex < 0 || lbIndex >= items.length) return;
   lb.hidden = false;
   document.body.classList.add('no-scroll');
   renderStrip();
   show();
 }
 function close() {
+  stopSlide();
   resetZoom();
   lb.hidden = true;
   lbStage.textContent = '';
@@ -215,7 +152,22 @@ function step(d) {
   show();
 }
 
-// ─── Zoom / pan (ca în Google Photos) ─────────────────────────────────────
+function toggleSlide() {
+  if (slideTimer) return stopSlide();
+  if (lb.hidden) open(0);
+  slideTimer = setInterval(() => step(1), 3500);
+  const i = lb.querySelector('.lb-slideshow .msi');
+  if (i) i.textContent = 'pause';
+}
+function stopSlide() {
+  if (!slideTimer) return;
+  clearInterval(slideTimer);
+  slideTimer = null;
+  const i = lb.querySelector('.lb-slideshow .msi');
+  if (i) i.textContent = 'play_arrow';
+}
+
+// ─── Zoom / pan ──────────────────────────────────────────────────────────
 let zoom = { s: 1, x: 0, y: 0 };
 const zoomImg = () => lbStage.querySelector('img');
 function applyZoom() {
@@ -265,8 +217,7 @@ function initZoom() {
   lbStage.addEventListener('pointermove', (e) => {
     if (!pts.has(e.pointerId)) return;
     const prev = pts.get(e.pointerId);
-    const dx = e.clientX - prev.x;
-    const dy = e.clientY - prev.y;
+    const dx = e.clientX - prev.x, dy = e.clientY - prev.y;
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pts.size === 2) {
       const p = [...pts.values()];
@@ -288,18 +239,27 @@ function initZoom() {
 
 function wire() {
   initZoom();
+
+  $('copyBtn').onclick = async () => {
+    try { await navigator.clipboard.writeText(location.href); toast('Link copiat'); }
+    catch { toast('Copiază din bara de adrese'); }
+  };
+  $('slideBtn').onclick = () => { open(0); toggleSlide(); };
+
   lb.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-act]');
     const act = btn && btn.dataset.act;
     if (act === 'close') close();
-    else if (act === 'prev') step(-1);
-    else if (act === 'next') step(1);
+    else if (act === 'prev') { stopSlide(); step(-1); }
+    else if (act === 'next') { stopSlide(); step(1); }
+    else if (act === 'slideshow') toggleSlide();
     else if (e.target === lb || e.target === lbStage) close();
   });
   document.addEventListener('keydown', (e) => {
     if (lb.hidden) return;
     if (e.key === 'Escape') close();
-    else if (e.key === 'ArrowLeft') step(-1);
-    else if (e.key === 'ArrowRight') step(1);
+    else if (e.key === 'ArrowLeft') { stopSlide(); step(-1); }
+    else if (e.key === 'ArrowRight') { stopSlide(); step(1); }
+    else if (e.key === ' ') { e.preventDefault(); toggleSlide(); }
   });
 }

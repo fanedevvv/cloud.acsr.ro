@@ -4,46 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#000000">
   <title>Album partajat — Cloud</title>
   <!--OG-->
   <script src="/assets/theme-init.js"></script>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=18">
+  <link rel="stylesheet" href="/assets/styles.css?v=20">
 </head>
-<body>
-  <header class="sh-top">
-    <a class="sh-brand" href="/"><span class="mark"><span class="msi">cloud</span></span>Cloud</a>
-    <div class="spacer"></div>
-    <a class="btn ghost" href="/">Deschide Cloud</a>
-  </header>
+<body class="sh-body">
+  <div id="loading" class="sh-loading"><span class="msi">progress_activity</span></div>
 
-  <main class="sh-page">
-    <div id="loading" class="sh-loading"><span class="msi">progress_activity</span></div>
-
-    <div id="album" hidden>
-      <div class="sh-hero">
-        <h1 id="albumTitle"></h1>
-        <div id="albumSub" class="sh-sub"></div>
+  <div id="album" hidden>
+    <section class="sh-hero">
+      <img id="heroImg" class="sh-hero-img" alt="">
+      <div class="sh-hero-scrim"></div>
+      <div class="sh-hero-bar">
+        <a class="sh-round" href="/" aria-label="Închide"><span class="msi">arrow_back</span></a>
+        <div class="spacer"></div>
+        <button class="sh-round" id="slideBtn" aria-label="Slideshow"><span class="msi">play_arrow</span></button>
+        <button class="sh-round" id="copyBtn" aria-label="Copiază linkul"><span class="msi">link</span></button>
       </div>
-      <div id="grid" class="j-scroll sh-grid"></div>
-    </div>
+      <div class="sh-hero-text">
+        <h1 id="albumTitle"></h1>
+        <div id="heroDate" class="sh-hero-date"></div>
+        <div class="sh-hero-chip"><span class="msi">group</span> Album partajat</div>
+      </div>
+    </section>
 
-    <div id="notfound" class="empty" hidden>
-      <span class="msi big">link_off</span>
-      <p>Linkul nu este valid sau a fost dezactivat.</p>
-    </div>
-  </main>
+    <div id="grid" class="sh-sqgrid"></div>
 
-  <footer id="foot" class="sh-foot" hidden>
-    <a class="sh-brand small" href="/"><span class="mark"><span class="msi">cloud</span></span>Cloud</a>
-  </footer>
+    <footer class="sh-foot">
+      <a class="sh-brand small" href="/"><span class="mark"><span class="msi">cloud</span></span>Cloud</a>
+    </footer>
+  </div>
+
+  <div id="notfound" class="empty" hidden>
+    <span class="msi big">link_off</span>
+    <p>Linkul nu este valid sau a fost dezactivat.</p>
+  </div>
 
   <div id="lightbox" class="lightbox" hidden>
     <div class="lb-bar">
       <button class="icon-btn" data-act="close" aria-label="Înapoi"><span class="msi">arrow_back</span></button>
       <span id="lbCount" class="lb-count"></span>
       <div class="spacer"></div>
+      <button class="icon-btn lb-slideshow" data-act="slideshow" aria-label="Slideshow"><span class="msi">play_arrow</span></button>
       <a id="lbDownload" class="icon-btn" download aria-label="Descarcă"><span class="msi">download</span></a>
     </div>
     <button class="icon-btn lb-nav lb-prev" data-act="prev" aria-label="Anterior"><span class="msi">chevron_left</span></button>
@@ -52,6 +58,8 @@
     <div id="lbStrip" class="lb-strip"></div>
   </div>
 
-  <script src="/assets/share.js?v=18"></script>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/assets/share.js?v=20"></script>
 </body>
 </html>

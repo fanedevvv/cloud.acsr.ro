@@ -631,8 +631,11 @@ app.get('/api/s/:token', shareLimiter, (req, res) => {
   const a = getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
   const items = mediaInAlbum(a.id);
+  let coverId = null;
+  if (a.cover_id && items.some((it) => it.id === a.cover_id)) coverId = a.cover_id;
+  else if (items[0]) coverId = items[0].id;
   res.set('X-Robots-Tag', 'noindex, nofollow');
-  res.json({ name: a.name, count: items.length, items });
+  res.json({ name: a.name, count: items.length, coverId, items });
 });
 
 function shareMediaGuard(req, res, next) {
