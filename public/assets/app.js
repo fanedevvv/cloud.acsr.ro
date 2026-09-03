@@ -17,6 +17,7 @@ let archiveList = [];
 let trashList = [];
 let albums = [];
 let memories = [];
+let stats = null;
 let query = '';
 let filterType = 'all';
 let filterFav = false;
@@ -69,7 +70,7 @@ async function api(path, opts = {}) {
 
 async function loadAll() {
   media = await api('/api/media');
-  updateStorage();
+  loadStats();
   try { memories = await api('/api/memories'); } catch { memories = []; }
 }
 async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
@@ -81,14 +82,25 @@ async function loadAlbum(id) {
   cur.items = d.items;
 }
 
+function fmtBytes(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + ' GB';
+  if (n >= 1e6) return Math.round(n / 1e6) + ' MB';
+  return Math.round(n / 1e3) + ' KB';
+}
+async function loadStats() {
+  try { stats = await api('/api/stats'); } catch { stats = null; }
+  updateStorage();
+}
 function updateStorage() {
   if (!$('storageText')) return;
-  const bytes = media.reduce((s, m) => s + (m.size || 0), 0);
-  const gb = bytes / 1e9;
+  const used = stats ? stats.usedBytes : media.reduce((s, m) => s + (m.size || 0), 0);
+  const total = stats ? stats.totalBytes : 0;
+  const count = stats ? stats.count : media.length;
+  const pct = total ? Math.min(100, (used / total) * 100) : 0;
   $('storageText').textContent =
-    (gb >= 1 ? gb.toFixed(2) + ' GB' : Math.round(bytes / 1e6) + ' MB') +
-    ' folosiți · ' + media.length + ' elemente';
-  $('storageFill').style.width = Math.max(3, Math.min(100, (gb / 50) * 100)) + '%';
+    fmtBytes(used) + (total ? ' din ' + fmtBytes(total) : ' folosiți') + '  ·  ' + count + ' elemente';
+  $('storageFill').style.width = Math.max(1.5, pct || 4) + '%';
+  $('storageFill').classList.toggle('full', pct > 90);
 }
 
 // ─── Temă ──────────────────────────────────────────────────────────────────
@@ -1389,6 +1401,52 @@ function wire() {
     });
     xhr.addEventListener('error', () => { $('importStat').textContent = 'Eroare de rețea'; $('importStart').disabled = false; });
     xhr.send(fd);
+  };
+
+  // ─── Optimizare spațiu ──────────────────────────────────────────────────
+  let optTimer = null;
+  const stopOpt = () => { if (optTimer) { clearInterval(optTimer); optTimer = null; } };
+  $('optimizeBtn').onclick = (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    $('optProgress').hidden = true;
+    $('optVideo').checked = false;
+    $('optStart').disabled = false;
+    $('optModal').hidden = false;
+  };
+  $('optClose').onclick = () => { stopOpt(); $('optModal').hidden = true; };
+  $('optStart').onclick = async () => {
+    if (!confirm('Recompresie ireversibilă: originalele sunt înlocuite cu versiuni mai mici, practic identice vizual. Continui?')) return;
+    $('optStart').disabled = true;
+    $('optProgress').hidden = false;
+    $('optBar').style.width = '2%';
+    $('optStat').textContent = 'Se pornește…';
+    let jobId;
+    try {
+      const d = await api('/api/optimize', { method: 'POST', body: { video: $('optVideo').checked } });
+      jobId = d.jobId;
+    } catch (e) { $('optStat').textContent = e.message; $('optStart').disabled = false; return; }
+    stopOpt();
+    optTimer = setInterval(async () => {
+      let j;
+      try { j = await api('/api/optimize/status/' + jobId); } catch { return; }
+      const PH = { starting: 'Se pregătește…', scanning: 'Se scanează…', running: 'Se comprimă', done: 'Gata', error: 'Eroare' };
+      const pct = j.total ? (j.done / j.total) * 100 : (j.phase === 'done' ? 100 : 5);
+      $('optBar').style.width = Math.max(2, pct).toFixed(1) + '%';
+      const bits = [PH[j.phase] || j.phase];
+      if (j.total) bits.push(j.done + '/' + j.total);
+      if (j.changed) bits.push(j.changed + ' comprimate');
+      if (j.savedBytes > 0) bits.push('−' + fmtBytes(j.savedBytes));
+      $('optStat').textContent = bits.join('  ·  ');
+      if (j.phase === 'done' || j.phase === 'error') {
+        stopOpt();
+        $('optStart').disabled = false;
+        toast(j.phase === 'done' ? ('Optimizat: −' + fmtBytes(j.savedBytes) + ' pe ' + j.changed + ' fișiere') : 'Optimizare cu erori');
+        await loadAll(); await loadAlbums();
+        if (cur.view === 'album') await loadAlbum(cur.albumId);
+        rerender();
+      }
+    }, 1500);
   };
 
   function pollImport(jobId) {

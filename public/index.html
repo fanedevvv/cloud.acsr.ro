@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=14">
+  <link rel="stylesheet" href="/assets/styles.css?v=15">
 </head>
 <body>
   <div class="app">
@@ -59,6 +59,7 @@
             <button class="menu-item theme-opt" data-theme="system"><span class="msi">brightness_auto</span>Sistem</button>
             <div class="menu2-sep"></div>
             <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Import Google Takeout</button>
+            <button id="optimizeBtn" class="menu-item"><span class="msi">compress</span>Optimizează spațiul</button>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
           </div>
         </div>
@@ -198,6 +199,23 @@
     </div>
   </div>
 
+  <div id="optModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Optimizează spațiul</h2>
+      <p class="muted">Recomprimă pozele în WebP la calitate înaltă — practic identice vizual, dar cu ~15–35% mai puțin spațiu. <b>Operațiunea înlocuiește originalele și nu se poate anula.</b></p>
+      <label class="opt-check"><input type="checkbox" id="optVideo"> Recomprimă și clipurile (H.265 — mult mai lent)</label>
+      <div id="optProgress" class="import-prog" hidden>
+        <div class="bar"><div id="optBar" class="fill"></div></div>
+        <div id="optStat" class="muted"></div>
+      </div>
+      <div class="modal-actions">
+        <span></span>
+        <span><button id="optStart" class="btn primary">Pornește</button>
+        <button id="optClose" class="btn">Închide</button></span>
+      </div>
+    </div>
+  </div>
+
   <div id="importModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Import din Google Photos</h2>
@@ -243,7 +261,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/assets/app.js?v=14"></script>
-  <script src="/assets/pwa.js?v=14"></script>
+  <script src="/assets/app.js?v=15"></script>
+  <script src="/assets/pwa.js?v=15"></script>
 </body>
 </html>

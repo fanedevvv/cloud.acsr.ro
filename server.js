@@ -28,12 +28,14 @@ const {
 } = require('./lib/media');
 const { backfillHashes } = require('./lib/media');
 const takeout = require('./lib/takeout');
+const optimize = require('./lib/optimize');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PASSWORD_HASH = process.env.PASSWORD_HASH || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
+const STORAGE_LIMIT_GB = Number(process.env.STORAGE_LIMIT_GB) || 0;
 
 if (!PASSWORD_HASH || !SESSION_SECRET) {
   console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
@@ -274,6 +276,33 @@ app.get('/api/csrf', requireAuth, (req, res) => {
 });
 
 // ─── Listă media ────────────────────────────────────────────────────────────
+app.get('/api/stats', requireAuth, (req, res) => {
+  const usedBytes = db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get().s;
+  let totalBytes = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB * 1e9 : 0;
+  if (!totalBytes) {
+    try { const st = fs.statfsSync(DATA_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
+  }
+  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL').get().n;
+  res.json({ usedBytes, totalBytes, count });
+});
+
+// Optimizare spațiu (recompresie) — job în fundal
+app.post('/api/optimize', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  if (optimize.current() && !optimize.current().finishedAt) {
+    return res.status(409).json({ error: 'o optimizare rulează deja' });
+  }
+  const mode = req.body && req.body.mode === 'aggressive' ? 'aggressive' : 'safe';
+  const withVideo = !!(req.body && req.body.video);
+  const job = optimize.start({ mode, withVideo });
+  res.json({ jobId: job.id });
+});
+
+app.get('/api/optimize/status/:id', requireAuth, (req, res) => {
+  const job = optimize.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(job);
+});
+
 app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;

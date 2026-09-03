@@ -529,3 +529,6 @@ body.selecting .chk { opacity: 1; }
 .import-prog .bar { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
 .import-prog .fill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .import-prog #importStat { margin-top: 8px; font-size: 13px; }
+
+.storage-fill.full { background: var(--danger); }
+.opt-check { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 6px 0 4px; cursor: pointer; }
