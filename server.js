@@ -36,6 +36,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
 const STORAGE_LIMIT_GB = Number(process.env.STORAGE_LIMIT_GB) || 0;
+const COMMENT_WEBHOOK = process.env.COMMENT_WEBHOOK || '';
 
 if (!PASSWORD_HASH || !SESSION_SECRET) {
   console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
@@ -1034,6 +1035,16 @@ app.delete('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
 });
 
 // Moderare comentarii (partea proprietarului)
+app.get('/api/shares/activity', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT c.id, c.album_id AS albumId, a.name AS albumName, c.name, c.body, c.emoji, c.created_at AS createdAt
+    FROM album_comments c JOIN albums a ON a.id = c.album_id
+    WHERE a.share_token IS NOT NULL
+    ORDER BY c.created_at DESC LIMIT 60
+  `).all();
+  res.json(rows.map((c) => ({ id: c.id, albumId: c.albumId, albumName: c.albumName, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.createdAt })));
+});
+
 app.get('/api/albums/:id/comments', requireAuth, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
@@ -1131,6 +1142,15 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   }
   const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
   db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (@id,@album_id,@media_id,@name,@body,@emoji,@created_at,@ip_hash)').run(row);
+  if (COMMENT_WEBHOOK) {
+    const url = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
+    const txt = '💬 ' + name + ' pe „' + a.name + '": ' + (body || emoji || '');
+    fetch(COMMENT_WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: txt, text: txt, album: a.name, name, body: body || null, emoji, url, at: row.created_at }),
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => {});
+  }
   res.json(mapComment(row));
 });
 

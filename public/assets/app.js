@@ -77,6 +77,8 @@ let slideTimer = null;
     await Promise.all([loadAll(), loadAlbums()]);
   } catch { /* api() a redirecționat la 401 */ }
   route();
+  pollSharesBadge();
+  setInterval(pollSharesBadge, 3 * 60 * 1000);
 })();
 
 async function api(path, opts = {}) {
@@ -863,12 +865,62 @@ function renderAlbums() {
   for (const a of albums) grid.appendChild(albumCard(a));
 }
 
-function renderShares() {
+async function renderShares() {
   const shared = albums.filter((a) => a.shareToken);
   const grid = $('sharesGrid');
   grid.textContent = '';
   $('sharesEmpty').hidden = shared.length > 0;
   for (const a of shared) grid.appendChild(albumCard(a));
+
+  // activitate recentă (comentarii/reacții de la vizitatori)
+  let act = [];
+  try { act = await api('/api/shares/activity'); } catch {}
+  let feed = $('sharesFeed');
+  if (!feed) {
+    feed = document.createElement('div');
+    feed.id = 'sharesFeed';
+    feed.className = 'shares-feed';
+    $('viewShares').appendChild(feed);
+  }
+  feed.textContent = '';
+  if (act.length) {
+    const h = document.createElement('h2');
+    h.className = 'shares-feed-h';
+    h.textContent = 'Activitate recentă';
+    feed.appendChild(h);
+    for (const c of act) {
+      const row = document.createElement('a');
+      row.className = 'feed-row';
+      row.href = '#/album/' + c.albumId;
+      const what = c.body ? esc0(c.body) : (c.emoji || '');
+      row.innerHTML = '<b>' + esc0(c.name) + '</b> ' + (c.emoji && c.body ? c.emoji + ' ' : '') + what
+        + '<span class="muted"> · „' + esc0(c.albumName) + '" · ' + relTime0(c.createdAt) + '</span>';
+      feed.appendChild(row);
+    }
+  }
+  try { localStorage.setItem('sharesSeen', act[0] ? act[0].createdAt : new Date().toISOString()); } catch {}
+  updateSharesBadge(act);
+}
+
+function esc0(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function relTime0(iso) {
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return 'acum'; if (s < 3600) return Math.floor(s / 60) + ' min';
+  if (s < 86400) return Math.floor(s / 3600) + ' h';
+  return new Date(iso).toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' });
+}
+function updateSharesBadge(act) {
+  const link = document.querySelector('.side-link[data-view="shares"]');
+  if (!link) return;
+  let seen = ''; try { seen = localStorage.getItem('sharesSeen') || ''; } catch {}
+  const fresh = (act || []).some((c) => c.createdAt > seen);
+  link.classList.toggle('has-dot', fresh && cur.view !== 'shares');
+}
+async function pollSharesBadge() {
+  try {
+    const act = await api('/api/shares/activity');
+    updateSharesBadge(act);
+  } catch {}
 }
 
 function rerender() {

@@ -859,3 +859,17 @@ body.selecting .chk { opacity: 1; }
 
 /* drag fișiere pe album  v47 */
 .album-card.drop-on { outline: 2px dashed var(--accent); outline-offset: 3px; border-radius: 12px; }
+
+/* ── Partajări: activitate + badge  v50 ─────────────────────────────── */
+.side-link { position: relative; }
+.side-link.has-dot::after {
+  content: ''; position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%; background: var(--danger);
+}
+.shares-feed { max-width: 1720px; margin: 8px auto 0; padding: 8px 24px 48px; }
+.shares-feed-h { font-size: 16px; font-weight: 500; margin: 12px 0 8px; }
+.feed-row { display: block; padding: 9px 4px; border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--text); text-decoration: none; }
+.feed-row:hover { background: var(--hover); }
+.feed-row b { font-weight: 600; }
+@media (max-width: 520px) { .shares-feed { padding: 8px 12px 40px; } }
