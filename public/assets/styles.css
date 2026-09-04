@@ -911,3 +911,14 @@ body.selecting .chk { opacity: 1; }
 #accName { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--border);
   border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; }
 .acc-file { margin-top: 10px; }
+
+/* ── Google login  v55 ──────────────────────────────────────────────── */
+.google-btn { display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; box-sizing: border-box; padding: 11px 14px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px;
+  font-weight: 500; text-decoration: none; cursor: pointer; }
+.google-btn:hover { background: var(--hover); }
+.login-or { display: flex; align-items: center; text-align: center; color: var(--text-dim); font-size: 12px; margin: 4px 0; }
+.login-or::before, .login-or::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.login-or span { padding: 0 12px; }
+.login-hint a { color: var(--accent); }

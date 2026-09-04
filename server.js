@@ -37,6 +37,9 @@ const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
 const STORAGE_LIMIT_GB = Number(process.env.STORAGE_LIMIT_GB) || 0;
 const COMMENT_WEBHOOK = process.env.COMMENT_WEBHOOK || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
 
 if (!PASSWORD_HASH || !SESSION_SECRET) {
   console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
@@ -305,6 +308,103 @@ app.post('/api/register', registerLimiter, express.json({ limit: '4kb' }), async
   });
 });
 
+// ─── Autentificare cu Google (OAuth2, fără librărie) ──────────────────────
+const GOOGLE_ON = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+app.get('/api/auth/config', (req, res) => res.json({ google: GOOGLE_ON }));
+
+function googleRedirectUri(req) {
+  return GOOGLE_REDIRECT_URI || ('https://' + req.get('host') + '/auth/google/callback');
+}
+
+app.get('/auth/google', (req, res) => {
+  if (!GOOGLE_ON) return res.redirect('/login?e=google-off');
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState = state;
+  req.session.save(() => {
+    const p = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: googleRedirectUri(req),
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+      prompt: 'select_account',
+    });
+    res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + p.toString());
+  });
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  if (!GOOGLE_ON) return res.redirect('/login?e=google-off');
+  const { code, state, error } = req.query;
+  if (error || !code) return res.redirect('/login?e=google-cancel');
+  if (!state || state !== req.session.oauthState) return res.redirect('/login?e=state');
+  delete req.session.oauthState;
+  try {
+    const tokRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: googleRedirectUri(req),
+        grant_type: 'authorization_code',
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const tok = await tokRes.json();
+    if (!tokRes.ok || !tok.id_token) throw new Error('token');
+    // id_token vine direct de la endpointul Google (server-la-server) -> decodăm payload-ul
+    const payload = JSON.parse(Buffer.from(tok.id_token.split('.')[1], 'base64url').toString('utf8'));
+    if (!payload.sub || payload.aud !== GOOGLE_CLIENT_ID) throw new Error('aud');
+    const gid = String(payload.sub);
+    const email = String(payload.email || '');
+    const name = String(payload.name || email.split('@')[0] || 'Utilizator').slice(0, 40);
+
+    let u = db.prepare('SELECT * FROM users WHERE google_id = ?').get(gid)
+      || (email && db.prepare('SELECT * FROM users WHERE email = ? AND google_id IS NULL').get(email));
+    if (u) {
+      if (!u.google_id) db.prepare('UPDATE users SET google_id = ? WHERE id = ?').run(gid, u.id);
+    } else {
+      const first = db.prepare('SELECT COUNT(*) n FROM users').get().n === 0;
+      let uname = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 20) || 'user';
+      if (uname.length < 3) uname = 'user' + uname;
+      let base = uname, i = 1;
+      while (db.prepare('SELECT 1 FROM users WHERE username = ?').get(uname)) uname = base + (++i);
+      const id = crypto.randomUUID();
+      db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, google_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, uname, '', name, first ? 1 : 0, gid, email || null, new Date().toISOString());
+      u = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    }
+
+    // preia poza de profil (o dată, dacă nu are deja)
+    if (!u.has_avatar && payload.picture) {
+      try {
+        const pr = await fetch(payload.picture, { signal: AbortSignal.timeout(8000) });
+        if (pr.ok) {
+          const buf = Buffer.from(await pr.arrayBuffer());
+          await require('sharp')(buf, { failOn: 'none' }).resize(200, 200, { fit: 'cover' }).webp({ quality: 82 })
+            .toFile(path.join(AVATAR_DIR, u.id + '.webp'));
+          db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
+        }
+      } catch { /* fără poză */ }
+    }
+
+    req.session.regenerate((err2) => {
+      if (err2) return res.redirect('/login?e=session');
+      req.session.authed = true;
+      req.session.userId = u.id;
+      req.session.displayName = u.display_name;
+      req.session.role = u.is_admin ? 'admin' : 'user';
+      req.session.csrf = crypto.randomBytes(32).toString('hex');
+      req.session.save(() => res.redirect('/'));
+    });
+  } catch (e) {
+    console.error('google oauth:', e.message);
+    res.redirect('/login?e=google-fail');
+  }
+});
+
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
   const username = String(req.body && req.body.username || '').trim();
   const password = String(req.body && req.body.password || '');
@@ -313,7 +413,7 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   if (username) {
     const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     let ok = false;
-    try { ok = u && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
+    try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
     if (!ok) return res.status(401).json({ error: 'utilizator sau parolă greșită' });
     return req.session.regenerate((err) => {
       if (err) return res.status(500).json({ error: 'eroare server' });
@@ -1432,6 +1532,11 @@ app.get('/p/:token', shareLimiter, (req, res) => {
 app.get('/login', (req, res) => {
   if (req.session && req.session.authed) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/register', (req, res) => {
+  if (req.session && req.session.authed) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
 app.get('/', requireAuthPage, (req, res) => {
