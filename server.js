@@ -690,6 +690,27 @@ app.get('/api/memories', requireAuth, (req, res) => {
   res.json(rows);
 });
 
+// Context: în ce albume e poza, dacă e partajată, ce persoane apar
+app.get('/api/media/:id/context', requireAuth, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  const albums = db.prepare(`
+    SELECT a.id, a.name FROM album_items ai JOIN albums a ON a.id = ai.album_id
+    WHERE ai.media_id = ? ORDER BY a.name
+  `).all(row.id);
+  let people = [];
+  try {
+    people = db.prepare(`
+      SELECT c.id AS cid, c.name, f.id AS faceId
+      FROM faces f JOIN face_clusters c ON c.id = f.cluster_id
+      WHERE f.media_id = ? AND c.n >= 2
+    `).all(row.id);
+  } catch { people = []; }
+  let tags = [];
+  try { tags = db.prepare('SELECT tag FROM media_tags WHERE media_id = ? ORDER BY score DESC').all(row.id).map((t) => t.tag); } catch {}
+  res.json({ albums, shared: !!row.share_token, people, tags, place: row.place || null });
+});
+
 // Actualizează favorite / arhivat / descriere
 app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
   const row = getRow(req.params.id);

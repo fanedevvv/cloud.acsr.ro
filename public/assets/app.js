@@ -1613,6 +1613,60 @@ function renderInfo() {
     body.appendChild(row);
   }
 
+  // context: albume / partajare / persoane / etichete (async)
+  const ctxWrap = document.createElement('div');
+  ctxWrap.className = 'info-ctx';
+  body.appendChild(ctxWrap);
+  api('/api/media/' + it.id + '/context').then((c) => {
+    if (lbList[lbIndex] !== it) return;
+    ctxWrap.textContent = '';
+    if (c.people && c.people.length) {
+      const r = document.createElement('div'); r.className = 'info-row info-people';
+      r.innerHTML = '<span class="msi">group</span>';
+      const box = document.createElement('span');
+      for (const p of c.people) {
+        const a = document.createElement('a');
+        a.href = '#/person/' + p.cid;
+        a.className = 'info-chip';
+        a.innerHTML = '<img src="/api/faces/' + p.faceId + '/crop">' + escapeHtml(p.name || 'Fără nume');
+        a.onclick = () => closeLightbox();
+        box.appendChild(a);
+      }
+      r.appendChild(box); ctxWrap.appendChild(r);
+    }
+    if (c.albums && c.albums.length) {
+      const r = document.createElement('div'); r.className = 'info-row';
+      r.innerHTML = '<span class="msi">photo_album</span>';
+      const box = document.createElement('span');
+      c.albums.forEach((al, i) => {
+        const a = document.createElement('a');
+        a.href = '#/album/' + al.id; a.textContent = al.name; a.className = 'info-link';
+        a.onclick = () => closeLightbox();
+        box.appendChild(a);
+        if (i < c.albums.length - 1) box.appendChild(document.createTextNode(', '));
+      });
+      r.appendChild(box); ctxWrap.appendChild(r);
+    }
+    if (c.tags && c.tags.length) {
+      const r = document.createElement('div'); r.className = 'info-row';
+      r.innerHTML = '<span class="msi">category</span>';
+      const box = document.createElement('span');
+      c.tags.forEach((t, i) => {
+        const a = document.createElement('a');
+        a.href = '#/thing/' + encodeURIComponent(t); a.textContent = t; a.className = 'info-link';
+        a.onclick = () => closeLightbox();
+        box.appendChild(a);
+        if (i < c.tags.length - 1) box.appendChild(document.createTextNode(', '));
+      });
+      r.appendChild(box); ctxWrap.appendChild(r);
+    }
+    if (c.shared) {
+      const r = document.createElement('div'); r.className = 'info-row';
+      r.innerHTML = '<span class="msi">link</span><span>Partajată printr-un link</span>';
+      ctxWrap.appendChild(r);
+    }
+  }).catch(() => {});
+
   destroyInfoMap();
   if (it.lat != null && it.lon != null && window.L) {
     if (it.place) {
