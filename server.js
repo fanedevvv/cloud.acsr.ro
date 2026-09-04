@@ -197,6 +197,8 @@ function albumSummary(a) {
     lastAt: agg.lastAt || null,
     coverId,
     shareToken: a.share_token || null,
+    allowComments: a.allow_comments == null ? true : !!a.allow_comments,
+    allowContrib: !!a.allow_contrib,
   };
 }
 
@@ -629,6 +631,8 @@ app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
     }
     db.prepare('UPDATE albums SET cover_id = ? WHERE id = ?').run(cid || null, a.id);
   }
+  if ('allowComments' in b) db.prepare('UPDATE albums SET allow_comments = ? WHERE id = ?').run(b.allowComments ? 1 : 0, a.id);
+  if ('allowContrib' in b) db.prepare('UPDATE albums SET allow_contrib = ? WHERE id = ?').run(b.allowContrib ? 1 : 0, a.id);
   res.json(albumSummary(getAlbum(a.id)));
 });
 
@@ -689,6 +693,21 @@ app.delete('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
   res.json({ ok: true });
 });
 
+// Moderare comentarii (partea proprietarului)
+app.get('/api/albums/:id/comments', requireAuth, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const rows = db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at DESC').all(a.id);
+  res.json(rows.map((c) => ({ id: c.id, mediaId: c.media_id || null, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.created_at })));
+});
+
+app.delete('/api/albums/:id/comments/:cid', requireAuth, checkCsrf, (req, res) => {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const n = db.prepare('DELETE FROM album_comments WHERE id = ? AND album_id = ?').run(String(req.params.cid), a.id).changes;
+  res.json({ ok: true, deleted: n });
+});
+
 // Link de partajare pentru o singură poză / un singur clip
 app.post('/api/media/:id/share', requireAuth, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);
@@ -725,7 +744,78 @@ app.get('/api/s/:token', shareLimiter, (req, res) => {
   if (a.cover_id && items.some((it) => it.id === a.cover_id)) coverId = a.cover_id;
   else if (items[0]) coverId = items[0].id;
   res.set('X-Robots-Tag', 'noindex, nofollow');
-  res.json({ name: a.name, count: items.length, coverId, items });
+  res.json({
+    name: a.name, count: items.length, coverId, items,
+    allowComments: a.allow_comments == null ? true : !!a.allow_comments,
+    allowContrib: !!a.allow_contrib,
+  });
+});
+
+// ─── Social pe albumul partajat: comentarii + reacții + contribuții ────────
+const EMOJI_OK = new Set(['❤️', '😂', '😮', '😢', '👏', '🔥', '👍', '🎉']);
+const commentLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe mesaje' } });
+const contribLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe încărcări' } });
+const ipHash = (req) => crypto.createHash('sha256').update(String(req.ip || '') + SESSION_SECRET).digest('hex').slice(0, 16);
+const mapComment = (c) => ({ id: c.id, mediaId: c.media_id || null, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.created_at });
+
+function shareOriginOk(req) {
+  const origin = req.get('origin');
+  if (!origin) return true;
+  try { return new URL(origin).host === req.get('host'); } catch { return false; }
+}
+
+app.get('/api/s/:token/comments', shareLimiter, (req, res) => {
+  const a = getSharedAlbum(req.params.token);
+  if (!a) return res.status(404).json({ error: 'link invalid' });
+  const rows = db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at ASC').all(a.id);
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.json({ allowComments: a.allow_comments == null ? true : !!a.allow_comments, comments: rows.map(mapComment) });
+});
+
+app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }), (req, res) => {
+  const a = getSharedAlbum(req.params.token);
+  if (!a) return res.status(404).json({ error: 'link invalid' });
+  if (!(a.allow_comments == null ? true : a.allow_comments)) return res.status(403).json({ error: 'comentariile sunt oprite' });
+  if (!shareOriginOk(req)) return res.status(403).json({ error: 'origine invalidă' });
+  const b = req.body || {};
+  const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  const body = String(b.body || '').trim().slice(0, 1000);
+  const emoji = b.emoji && EMOJI_OK.has(String(b.emoji)) ? String(b.emoji) : null;
+  let mediaId = b.mediaId ? String(b.mediaId) : null;
+  if (!name) return res.status(400).json({ error: 'pune un nume' });
+  if (!body && !emoji) return res.status(400).json({ error: 'mesaj gol' });
+  if (mediaId) {
+    if (!UUID_RE.test(mediaId)) return res.status(400).json({ error: 'poză invalidă' });
+    const inAlbum = db.prepare('SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0').get(a.id, mediaId);
+    if (!inAlbum) return res.status(400).json({ error: 'poza nu e în album' });
+  }
+  const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
+  db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (@id,@album_id,@media_id,@name,@body,@emoji,@created_at,@ip_hash)').run(row);
+  res.json(mapComment(row));
+});
+
+const contribUpload = multer({ dest: TMP_DIR, limits: { fileSize: Math.min(MAX_UPLOAD_MB, 512) * 1024 * 1024, files: 20 } });
+app.post('/api/s/:token/contrib', contribLimiter, contribUpload.array('files', 20), async (req, res, next) => {
+  const a = getSharedAlbum(req.params.token);
+  if (!a) { for (const f of req.files || []) { try { fs.rmSync(f.path, { force: true }); } catch {} } return res.status(404).json({ error: 'link invalid' }); }
+  if (!a.allow_contrib) { for (const f of req.files || []) { try { fs.rmSync(f.path, { force: true }); } catch {} } return res.status(403).json({ error: 'adăugarea e oprită' }); }
+  if (!shareOriginOk(req)) return res.status(403).json({ error: 'origine invalidă' });
+  try {
+    const ins = db.prepare('INSERT OR IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
+    const now = new Date().toISOString();
+    let added = 0; const items = [];
+    for (const file of req.files || []) {
+      try {
+        const r = await processUpload(file);
+        ins.run(a.id, r.id, now);
+        added++; items.push({ id: r.id });
+      } catch (e) {
+        try { fs.rmSync(file.path, { force: true }); } catch {}
+        items.push({ error: e.message || 'procesare eșuată', name: file.originalname });
+      }
+    }
+    res.json({ added, items });
+  } catch (e) { next(e); }
 });
 
 function shareMediaGuard(req, res, next) {

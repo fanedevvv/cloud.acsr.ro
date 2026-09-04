@@ -650,8 +650,51 @@ function renderAlbum() {
   if (range) parts.push(range);
   if (a.shareToken) parts.push('partajat');
   $('albumSub').textContent = parts.join('  ·  ');
+  const ct = $('albumCommentsToggle'), cc = $('albumContribToggle');
+  if (ct) ct.classList.toggle('on', a.allowComments !== false);
+  if (cc) cc.classList.toggle('on', !!a.allowContrib);
   buildGallery($('albumGrid'), cur.items);
   $('albumEmpty').hidden = cur.items.length > 0;
+}
+
+async function toggleAlbumFlag(key) {
+  if (!cur.album) return;
+  const val = key === 'allowComments' ? !(cur.album.allowComments !== false) : !cur.album.allowContrib;
+  try {
+    const a = await api('/api/albums/' + cur.albumId, { method: 'PATCH', body: { [key]: val } });
+    cur.album = a;
+    renderAlbum();
+    toast(val ? 'Activat' : 'Dezactivat');
+  } catch (e) { toast(e.message); }
+}
+
+async function openModeration() {
+  $('albumMenu').hidden = true;
+  const list = $('cmList');
+  list.textContent = 'Se încarcă…';
+  $('cmModal').hidden = false;
+  let rows = [];
+  try { rows = await api('/api/albums/' + cur.albumId + '/comments'); } catch (e) { list.textContent = e.message; return; }
+  if (!rows.length) { list.innerHTML = '<p class="muted">Niciun comentariu încă.</p>'; return; }
+  list.textContent = '';
+  for (const c of rows) {
+    const d = document.createElement('div');
+    d.className = 'cm-row';
+    const txt = c.emoji && !c.body ? c.emoji : (c.emoji ? c.emoji + ' ' : '') + (c.body || '');
+    d.innerHTML = '<div><b>' + escapeHtml(c.name) + '</b> '
+      + '<span class="muted">' + new Date(c.createdAt).toLocaleString('ro-RO') + (c.mediaId ? ' · pe o poză' : '') + '</span>'
+      + '<div class="cm-body">' + escapeHtml(txt) + '</div></div>';
+    const del = document.createElement('button');
+    del.className = 'icon-btn2';
+    del.innerHTML = '<span class="msi">delete</span>';
+    del.title = 'Șterge';
+    del.onclick = async () => {
+      try { await api('/api/albums/' + cur.albumId + '/comments/' + c.id, { method: 'DELETE' }); d.remove(); toast('Șters'); }
+      catch (e) { toast(e.message); }
+    };
+    d.appendChild(del);
+    list.appendChild(d);
+  }
 }
 
 function albumCard(a) {
@@ -1638,6 +1681,10 @@ function wire() {
   document.addEventListener('click', () => { $('albumMenu').hidden = true; });
   $('albumCoverBtn').onclick = () => openCoverPicker();
   $('albumRename').onclick = () => startTitleEdit();
+  $('albumCommentsToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowComments'); };
+  $('albumContribToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowContrib'); };
+  $('albumModerate').onclick = () => openModeration();
+  $('cmClose').onclick = () => { $('cmModal').hidden = true; };
   $('albumDelete').onclick = async () => {
     if (!confirm('Ștergi albumul „' + cur.album.name + '”? Pozele rămân în galerie.')) return;
     try {

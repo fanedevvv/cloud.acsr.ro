@@ -10,7 +10,7 @@
   <script src="/assets/theme-init.js"></script>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=20">
+  <link rel="stylesheet" href="/assets/styles.css?v=34">
 </head>
 <body class="sh-body">
   <div id="loading" class="sh-loading"><span class="msi">progress_activity</span></div>
@@ -34,6 +34,24 @@
 
     <div id="grid" class="sh-sqgrid"></div>
 
+    <section id="social" class="sh-social" hidden>
+      <div id="contribWrap" class="sh-contrib" hidden>
+        <button id="contribBtn" class="sh-cbtn"><span class="msi">add_photo_alternate</span> Adaugă poze în album</button>
+        <input id="contribFile" type="file" accept="image/*,video/*" multiple hidden>
+        <div id="contribProg" class="sh-muted" hidden></div>
+      </div>
+      <h2 class="sh-sh2">Comentarii</h2>
+      <div id="composer" class="sh-composer">
+        <input id="cName" class="sh-cin" maxlength="40" placeholder="Numele tău" autocomplete="name">
+        <textarea id="cBody" class="sh-cta" maxlength="1000" rows="2" placeholder="Scrie un comentariu…"></textarea>
+        <div class="sh-crow">
+          <div class="sh-reacts" id="albumReacts"></div>
+          <button id="cSend" class="sh-cbtn small">Trimite</button>
+        </div>
+      </div>
+      <div id="albumCommentList" class="sh-clist"></div>
+    </section>
+
     <footer class="sh-foot">
       <a class="sh-brand small" href="/"><span class="mark"><span class="msi">cloud</span></span>Cloud</a>
     </footer>
@@ -56,10 +74,23 @@
     <button class="icon-btn lb-nav lb-next" data-act="next" aria-label="Următor"><span class="msi">chevron_right</span></button>
     <div class="lb-stage" id="lbStage"></div>
     <div id="lbStrip" class="lb-strip"></div>
+    <div id="lbSocial" class="lb-social">
+      <div class="sh-reacts sh-reacts-lb" id="lbReacts"></div>
+      <button id="lbCmtToggle" class="lb-cmt-toggle"><span class="msi">chat_bubble</span> <span id="lbCmtCount">0</span></button>
+    </div>
+    <div id="lbSheet" class="lb-sheet" hidden>
+      <div class="lb-sheet-head"><span>Comentarii</span><button id="lbSheetClose" class="sh-round" aria-label="Închide"><span class="msi">close</span></button></div>
+      <div id="lbSheetList" class="sh-clist"></div>
+      <div class="sh-composer">
+        <input id="lbcName" class="sh-cin" maxlength="40" placeholder="Numele tău" autocomplete="name">
+        <textarea id="lbcBody" class="sh-cta" rows="2" maxlength="1000" placeholder="Comentariu…"></textarea>
+        <button id="lbcSend" class="sh-cbtn small">Trimite</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="/assets/share.js?v=20"></script>
+  <script src="/assets/share.js?v=34"></script>
 </body>
 </html>

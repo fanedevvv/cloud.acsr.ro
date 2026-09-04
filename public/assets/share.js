@@ -13,6 +13,31 @@ let items = [];
 let lbIndex = -1;
 let slideTimer = null;
 
+// ─── Social ───────────────────────────────────────────────────────────────
+const REACTS = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
+let comments = [];
+let allowComments = true;
+let allowContrib = false;
+let myName = '';
+let myReacts = {};
+try { myName = localStorage.getItem('shareName') || ''; } catch {}
+try { myReacts = JSON.parse(localStorage.getItem('shareReacts') || '{}'); } catch {}
+const saveReacts = () => { try { localStorage.setItem('shareReacts', JSON.stringify(myReacts)); } catch {} };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const relTime = (iso) => {
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return 'acum';
+  if (s < 3600) return Math.floor(s / 60) + ' min';
+  if (s < 86400) return Math.floor(s / 3600) + ' h';
+  return new Date(iso).toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' });
+};
+function askName() {
+  if (myName) return myName;
+  const n = (prompt('Cum te cheamă?') || '').trim().slice(0, 40);
+  if (n) { myName = n; try { localStorage.setItem('shareName', n); } catch {} }
+  return myName;
+}
+
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const fmtDate = (iso, y) => new Date(iso).toLocaleDateString('ro-RO', y
   ? { day: 'numeric', month: 'long', year: 'numeric' }
@@ -67,7 +92,110 @@ function toast(msg) {
   buildGrid();
   $('loading').hidden = true;
   $('album').hidden = false;
+
+  allowComments = data.allowComments !== false;
+  allowContrib = !!data.allowContrib;
+  if (myName) { $('cName').value = myName; const l = $('lbcName'); if (l) l.value = myName; }
+  $('contribWrap').hidden = !allowContrib;
+  $('social').hidden = !(allowComments || allowContrib);
+  $('composer').hidden = !allowComments;
+  await loadComments();
 })();
+
+async function loadComments() {
+  if (!allowComments) { renderAlbumSocial(); return; }
+  try {
+    const r = await fetch('/api' + base + '/comments');
+    const d = await r.json();
+    comments = d.comments || [];
+  } catch { comments = []; }
+  renderAlbumSocial();
+}
+
+const forTarget = (mediaId) => comments.filter((c) => (c.mediaId || null) === (mediaId || null));
+const rKey = (mediaId) => mediaId || '__album__';
+
+function renderReacts(box, mediaId) {
+  box.textContent = '';
+  const mine = myReacts[rKey(mediaId)];
+  for (const e of REACTS) {
+    const n = forTarget(mediaId).filter((c) => c.emoji === e).length;
+    const b = document.createElement('button');
+    b.className = 'sh-react' + (mine === e ? ' on' : '');
+    b.type = 'button';
+    b.innerHTML = '<span class="e">' + e + '</span>' + (n ? '<span class="n">' + n + '</span>' : '');
+    b.onclick = () => react(e, mediaId, box);
+    box.appendChild(b);
+  }
+}
+async function react(emoji, mediaId, box) {
+  if (myReacts[rKey(mediaId)] === emoji) { toast('Ai reacționat deja'); return; }
+  const name = askName();
+  if (!name) return;
+  try {
+    const c = await postComment({ emoji, mediaId, name });
+    comments.push(c);
+    myReacts[rKey(mediaId)] = emoji;
+    saveReacts();
+    renderReacts(box, mediaId);
+  } catch (e) { toast(e.message || 'eroare'); }
+}
+
+async function postComment(payload) {
+  const r = await fetch('/api' + base + '/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+  return d;
+}
+
+function renderCommentList(el, mediaId) {
+  const list = forTarget(mediaId).filter((c) => c.body);
+  el.textContent = '';
+  if (!list.length) {
+    el.innerHTML = '<div class="sh-muted">Niciun comentariu încă.</div>';
+    return;
+  }
+  for (const c of list) {
+    const d = document.createElement('div');
+    d.className = 'sh-cmt';
+    d.innerHTML = '<div class="sh-cmt-h"><b>' + esc(c.name) + '</b><span>' + relTime(c.createdAt) + '</span></div>'
+      + '<p>' + esc(c.body).replace(/\n/g, '<br>') + '</p>';
+    el.appendChild(d);
+  }
+}
+
+function renderAlbumSocial() {
+  if (allowComments) {
+    renderReacts($('albumReacts'), null);
+    renderCommentList($('albumCommentList'), null);
+  }
+}
+
+async function sendComposer(nameEl, bodyEl, mediaId, after) {
+  const name = (nameEl.value || myName || '').trim().slice(0, 40);
+  const body = (bodyEl.value || '').trim();
+  if (!name) { toast('Pune un nume'); nameEl.focus(); return; }
+  if (!body) { bodyEl.focus(); return; }
+  myName = name;
+  try { localStorage.setItem('shareName', name); } catch {}
+  try {
+    const c = await postComment({ name, body, mediaId: mediaId || undefined });
+    comments.push(c);
+    bodyEl.value = '';
+    if (after) after();
+  } catch (e) { toast(e.message || 'eroare'); }
+}
+
+function renderLbSocial() {
+  const it = items[lbIndex];
+  if (!it || !allowComments) { $('lbSocial').style.display = allowComments ? '' : 'none'; return; }
+  renderReacts($('lbReacts'), it.id);
+  $('lbCmtCount').textContent = forTarget(it.id).filter((c) => c.body).length;
+  if (!$('lbSheet').hidden) renderCommentList($('lbSheetList'), it.id);
+}
 
 function buildGrid() {
   const grid = $('grid');
@@ -107,6 +235,7 @@ function close() {
   stopSlide();
   resetZoom();
   lb.hidden = true;
+  $('lbSheet').hidden = true;
   lbStage.textContent = '';
   document.body.classList.remove('no-scroll');
 }
@@ -128,6 +257,7 @@ function show() {
   lbDl.href = base + '/media/' + it.id + '/full';
   lbDl.setAttribute('download', it.originalName || it.id);
   $('lbCount').textContent = (lbIndex + 1) + ' / ' + items.length;
+  renderLbSocial();
   lbStrip.querySelectorAll('.strip-thumb').forEach((el, i) => {
     el.classList.toggle('cur', i === lbIndex);
     if (i === lbIndex) el.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -245,6 +375,56 @@ function wire() {
     catch { toast('Copiază din bara de adrese'); }
   };
   $('slideBtn').onclick = () => { open(0); toggleSlide(); };
+
+  // ─── Social: compunere album ──────────────────────────────────────────
+  $('cSend').onclick = () => sendComposer($('cName'), $('cBody'), null, () => renderCommentList($('albumCommentList'), null));
+  $('cBody').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('cSend').click(); }
+  });
+
+  // Lightbox: foaie de comentarii per poză
+  $('lbCmtToggle').onclick = () => {
+    const sh = $('lbSheet');
+    sh.hidden = !sh.hidden;
+    if (!sh.hidden) {
+      const it = items[lbIndex];
+      renderCommentList($('lbSheetList'), it && it.id);
+      if (myName) $('lbcName').value = myName;
+    }
+  };
+  $('lbSheetClose').onclick = () => { $('lbSheet').hidden = true; };
+  $('lbcSend').onclick = () => {
+    const it = items[lbIndex];
+    if (!it) return;
+    sendComposer($('lbcName'), $('lbcBody'), it.id, () => { renderCommentList($('lbSheetList'), it.id); renderLbSocial(); });
+  };
+
+  // Contribuții: vizitatorii adaugă poze în album
+  const cf = $('contribFile');
+  $('contribBtn').onclick = () => cf.click();
+  cf.addEventListener('change', async () => {
+    if (!cf.files.length) return;
+    const files = [...cf.files];
+    cf.value = '';
+    const prog = $('contribProg');
+    prog.hidden = false; prog.textContent = 'Se încarcă 0/' + files.length + '…';
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    try {
+      const r = await fetch('/api' + base + '/contrib', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      prog.textContent = (d.added || 0) + ' adăugate. Se reîmprospătează…';
+      const rr = await fetch('/api' + base);
+      const dd = await rr.json();
+      items = dd.items || [];
+      buildGrid();
+      const dates = items.map((it) => it.takenAt || it.createdAt).sort();
+      $('heroDate').textContent = dates.length ? dateRange(dates[0], dates[dates.length - 1]) : '';
+      prog.textContent = 'Gata — ' + (d.added || 0) + ' poze adăugate.';
+      toast('Mulțumim! ' + (d.added || 0) + ' poze adăugate');
+    } catch (e) { prog.textContent = ''; prog.hidden = true; toast(e.message || 'eroare la încărcare'); }
+  });
 
   lb.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-act]');

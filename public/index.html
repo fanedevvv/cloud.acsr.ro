@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=32">
+  <link rel="stylesheet" href="/assets/styles.css?v=34">
 </head>
 <body>
   <div class="app">
@@ -141,6 +141,11 @@
               <div id="albumMenu" class="menu2" hidden>
                 <button id="albumCoverBtn" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
                 <button id="albumRename" class="menu-item"><span class="msi">edit</span>Redenumește</button>
+                <div class="menu2-sep"></div>
+                <button id="albumCommentsToggle" class="menu-item"><span class="msi">chat_bubble</span>Permite comentarii<span class="mi-check msi">check</span></button>
+                <button id="albumContribToggle" class="menu-item"><span class="msi">add_photo_alternate</span>Permite adăugarea de poze<span class="mi-check msi">check</span></button>
+                <button id="albumModerate" class="menu-item"><span class="msi">forum</span>Vezi comentariile</button>
+                <div class="menu2-sep"></div>
                 <button id="albumDelete" class="menu-item"><span class="msi">delete</span>Șterge album</button>
               </div>
             </div>
@@ -296,12 +301,20 @@
     </div>
   </div>
 
+  <div id="cmModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Comentarii pe album</h2>
+      <div id="cmList" class="cm-list"></div>
+      <div class="modal-actions"><span></span><button id="cmClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=32"></script>
-  <script src="/assets/app.js?v=32"></script>
-  <script src="/assets/pwa.js?v=32"></script>
+  <script src="/assets/editor.js?v=34"></script>
+  <script src="/assets/app.js?v=34"></script>
+  <script src="/assets/pwa.js?v=34"></script>
 </body>
 </html>
