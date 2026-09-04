@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=31">
+  <link rel="stylesheet" href="/assets/styles.css?v=32">
 </head>
 <body>
   <div class="app">
@@ -32,6 +32,7 @@
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
         <a class="side-link" href="#/trash" data-view="trash"><span class="msi">delete</span><span class="lbl">Coș</span></a>
+        <a class="side-link" href="#/locked" data-view="locked"><span class="msi">lock</span><span class="lbl">Folder blocat</span></a>
       </nav>
       <div class="side-storage">
         <div class="storage-row"><span class="msi">cloud</span><span class="lbl">Stocare</span></div>
@@ -83,6 +84,7 @@
           <h1 id="gridTitle">Poze</h1>
           <div class="spacer"></div>
           <button id="emptyTrashBtn" class="btn ghost danger" hidden><span class="msi">delete_forever</span>Golește coșul</button>
+          <button id="lockCloseBtn" class="btn ghost" hidden><span class="msi">lock</span>Blochează</button>
         </div>
         <div id="trashNote" class="banner" hidden>
           <span class="msi">schedule</span> Elementele din coș se șterg definitiv după 30 de zile.
@@ -279,12 +281,27 @@
     </aside>
   </div>
 
+  <div id="lockGate" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="lockGateTitle"><span class="msi">lock</span> Folder blocat</h2>
+      <p class="muted" id="lockGateDesc">Introdu PIN-ul ca să vezi ce e aici.</p>
+      <input id="lockPin" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="PIN (4–12 cifre)">
+      <input id="lockPin2" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Confirmă PIN-ul" hidden>
+      <div id="lockGateErr" class="lock-err" hidden></div>
+      <div class="modal-actions">
+        <span></span>
+        <span><button id="lockGateOk" class="btn primary">Deschide</button>
+        <button id="lockGateCancel" class="btn">Anulează</button></span>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=31"></script>
-  <script src="/assets/app.js?v=31"></script>
-  <script src="/assets/pwa.js?v=31"></script>
+  <script src="/assets/editor.js?v=32"></script>
+  <script src="/assets/app.js?v=32"></script>
+  <script src="/assets/pwa.js?v=32"></script>
 </body>
 </html>

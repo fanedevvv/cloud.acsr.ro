@@ -153,14 +153,14 @@ const mapRow = (r) => ({
 function getSharedPhoto(token) {
   if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
   const row = db.prepare('SELECT * FROM media WHERE share_token = ?').get(token);
-  return row && !row.deleted_at ? row : null;
+  return row && !row.deleted_at && !row.locked ? row : null;
 }
 
 function mediaInAlbum(albumId) {
   return db.prepare(`
     SELECT ${MEDIA_COLS} FROM media m
     JOIN album_items ai ON ai.media_id = m.id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
   `).all(albumId).map(mapRow);
 }
@@ -171,11 +171,11 @@ function albumSummary(a) {
            MIN(COALESCE(m.taken_at, m.created_at)) firstAt,
            MAX(COALESCE(m.taken_at, m.created_at)) lastAt
     FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
   `).get(a.id);
   const newest = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
   // coperta aleasă manual, dacă e încă un membru valid; altfel cea mai recentă
@@ -183,7 +183,7 @@ function albumSummary(a) {
   if (a.cover_id) {
     const ok = db.prepare(`
       SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id
-      WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL
+      WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0
     `).get(a.id, a.cover_id);
     if (ok) coverId = a.cover_id;
   }
@@ -279,6 +279,63 @@ app.get('/api/csrf', (req, res) => {
   req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest' }));
 });
 
+// ─── Folder blocat (PIN) ───────────────────────────────────────────────────
+const getSetting = (k) => { const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(k); return r ? r.value : null; };
+const setSetting = (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v);
+const lockConfigured = () => !!getSetting('lock_pin_hash');
+function requireLockOpen(req, res, next) {
+  if (req.session && req.session.lockOpen) return next();
+  return res.status(403).json({ error: 'folder blocat' });
+}
+const PIN_RE = /^[0-9]{4,12}$/;
+const lockLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe încercări' } });
+
+app.get('/api/lock/status', (req, res) => {
+  res.json({ configured: lockConfigured(), open: !!(req.session && req.session.lockOpen) });
+});
+
+app.post('/api/lock/setup', checkCsrf, express.json({ limit: '4kb' }), async (req, res) => {
+  const pin = String(req.body && req.body.pin || '');
+  const current = String(req.body && req.body.current || '');
+  if (!PIN_RE.test(pin)) return res.status(400).json({ error: 'PIN-ul trebuie să aibă 4–12 cifre' });
+  if (lockConfigured()) {
+    const ok = await bcrypt.compare(current, getSetting('lock_pin_hash')).catch(() => false);
+    if (!ok) return res.status(403).json({ error: 'PIN-ul curent e greșit' });
+  }
+  setSetting('lock_pin_hash', await bcrypt.hash(pin, 10));
+  req.session.lockOpen = true;
+  req.session.save(() => res.json({ ok: true }));
+});
+
+app.post('/api/lock/unlock', lockLimiter, checkCsrf, express.json({ limit: '4kb' }), async (req, res) => {
+  if (!lockConfigured()) return res.status(400).json({ error: 'niciun PIN setat' });
+  const pin = String(req.body && req.body.pin || '');
+  const ok = await bcrypt.compare(pin, getSetting('lock_pin_hash')).catch(() => false);
+  if (!ok) return res.status(401).json({ error: 'PIN greșit' });
+  req.session.lockOpen = true;
+  req.session.save(() => res.json({ ok: true }));
+});
+
+app.post('/api/lock/close', checkCsrf, (req, res) => {
+  if (req.session) req.session.lockOpen = false;
+  res.json({ ok: true });
+});
+
+// Mută în / scoate din folderul blocat (necesită folderul deschis)
+app.post('/api/media/:id/lock', requireLockOpen, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE media SET locked = 1 WHERE id = ?').run(row.id);
+  db.prepare('DELETE FROM album_items WHERE media_id = ?').run(row.id);
+  res.json({ ok: true });
+});
+app.delete('/api/media/:id/lock', requireLockOpen, checkCsrf, (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row) return res.status(404).json({ error: 'nu există' });
+  db.prepare('UPDATE media SET locked = 0 WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
 // ─── Listă media ────────────────────────────────────────────────────────────
 app.get('/api/stats', requireAuth, (req, res) => {
   const usedBytes = db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get().s;
@@ -287,7 +344,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
     // spațiul volumului unde stau efectiv pozele (poate fi alt disc / NFS)
     try { const st = fs.statfsSync(ORIGINAL_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
   }
-  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL').get().n;
+  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL AND locked = 0').get().n;
   res.json({ usedBytes, totalBytes, count });
 });
 
@@ -312,10 +369,14 @@ app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;
   let order = 'ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC';
-  const live = 'deleted_at IS NULL AND archived = 0';
-  if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND favorite = 1';
-  else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1';
-  else if (f === 'trash') { where = 'deleted_at IS NOT NULL'; order = 'ORDER BY deleted_at DESC'; }
+  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0';
+  if (f === 'locked') {
+    if (!(req.session && req.session.lockOpen)) return res.status(403).json({ error: 'folder blocat' });
+    where = 'deleted_at IS NULL AND locked = 1';
+  }
+  else if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND favorite = 1';
+  else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1 AND locked = 0';
+  else if (f === 'trash') { where = 'deleted_at IS NOT NULL AND locked = 0'; order = 'ORDER BY deleted_at DESC'; }
   else if (f === 'videos') where = live + " AND type = 'video'";
   else if (f === 'screenshots') where = live + " AND kind_auto = 'screenshot'";
   else if (f === 'selfies') where = live + " AND kind_auto = 'selfie'";
@@ -331,7 +392,7 @@ app.get('/api/places', requireAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT id, type, lat, lon, place, taken_at AS takenAt, created_at AS createdAt
     FROM media
-    WHERE deleted_at IS NULL AND archived = 0 AND lat IS NOT NULL AND lon IS NOT NULL
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND lat IS NOT NULL AND lon IS NOT NULL
     ORDER BY COALESCE(taken_at, created_at) DESC
   `).all();
   res.json(rows);
@@ -339,7 +400,7 @@ app.get('/api/places', requireAuth, (req, res) => {
 
 // „Categorii" — câte elemente în fiecare secțiune automată
 app.get('/api/categories', requireAuth, (req, res) => {
-  const live = 'deleted_at IS NULL AND archived = 0';
+  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0';
   const one = (w) => db.prepare(`SELECT COUNT(*) n FROM media WHERE ${live} AND ${w}`).get().n;
   res.json({
     videos: one("type = 'video'"),
@@ -355,7 +416,7 @@ app.get('/api/memories', requireAuth, (req, res) => {
   const md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   const rows = db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
-    WHERE deleted_at IS NULL AND archived = 0
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0
       AND strftime('%m-%d', COALESCE(taken_at, created_at)) = ?
       AND CAST(strftime('%Y', COALESCE(taken_at, created_at)) AS INTEGER) < ?
     ORDER BY COALESCE(taken_at, created_at) DESC
@@ -388,7 +449,7 @@ app.get('/api/download', requireAuth, (req, res) => {
 
   const rows = ids
     .map((id) => db.prepare('SELECT * FROM media WHERE id = ?').get(id))
-    .filter((r) => r && !r.deleted_at);
+    .filter((r) => r && !r.deleted_at && (!r.locked || (req.session && req.session.lockOpen)));
   if (!rows.length) return res.status(404).json({ error: 'nu există' });
 
   res.set('Content-Type', 'application/zip');
@@ -507,17 +568,15 @@ app.get('/api/import/status/:id', requireAdmin, (req, res) => {
 });
 
 // ─── Servire fișiere (doar autentificat) ────────────────────────────────────
-app.get('/media/:id/thumb', requireAuth, (req, res) => {
+function mediaServeGuard(req, res, next) {
   const row = getRow(req.params.id);
   if (!row) return res.status(404).end();
-  sendThumb(row, res);
-});
-
-app.get('/media/:id/full', requireAuth, (req, res) => {
-  const row = getRow(req.params.id);
-  if (!row) return res.status(404).end();
-  sendFull(row, res);
-});
+  if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).end();
+  req.mediaRow = row;
+  next();
+}
+app.get('/media/:id/thumb', requireAuth, mediaServeGuard, (req, res) => sendThumb(req.mediaRow, res));
+app.get('/media/:id/full', requireAuth, mediaServeGuard, (req, res) => sendFull(req.mediaRow, res));
 
 // ─── Ștergere ───────────────────────────────────────────────────────────────
 app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
@@ -590,7 +649,7 @@ app.post('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) =
   const run = db.transaction((list) => {
     let n = 0;
     for (const mid of list) {
-      if (db.prepare('SELECT 1 FROM media WHERE id = ?').get(mid)) {
+      if (db.prepare('SELECT 1 FROM media WHERE id = ? AND locked = 0').get(mid)) {
         n += ins.run(a.id, mid, now).changes;
       }
     }
@@ -702,11 +761,11 @@ app.get('/s/:token', shareLimiter, (req, res) => {
 
   const agg = db.prepare(`
     SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
   `).get(a.id);
   const cover = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
 

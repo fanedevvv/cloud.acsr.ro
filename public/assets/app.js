@@ -1,13 +1,14 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const FLAT = ['all', 'highlights', 'archive', 'trash'];
-const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș' };
+const FLAT = ['all', 'highlights', 'archive', 'trash', 'locked'];
+const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș', locked: 'Folder blocat' };
 const EMPTY = {
   all: 'Nicio poză încă.',
   highlights: 'Nicio favorită. Apasă ⭐ pe o poză.',
   archive: 'Arhiva e goală.',
   trash: 'Coșul e gol.',
+  locked: 'Folderul blocat e gol. Mută aici poze din selecție.',
 };
 // Niveluri de zoom pe grilă (ca la Google Photos): mare → confortabil → compact → mic
 const ZOOM = [
@@ -22,6 +23,9 @@ let csrf = '';
 let media = [];
 let archiveList = [];
 let trashList = [];
+let lockedList = [];
+let lockOpen = false;
+let lockConfigured = false;
 let albums = [];
 let memories = [];
 let stats = null;
@@ -166,6 +170,7 @@ function route() {
   stopSlideshow();
   if (!lb.hidden) closeLightbox();
   const h = location.hash.replace(/^#/, '');
+  if (cur.view === 'locked' && h !== '/locked' && lockOpen) closeLock(true);
   const m = h.match(/^\/album\/([0-9a-f-]{36})$/i);
 
   if (m) {
@@ -191,6 +196,8 @@ function route() {
   } else if (h === '/trash') {
     if (!isAdmin) { location.hash = '#/'; return; }
     cur.view = 'trash'; showView(); loadTrash().then(renderGrid);
+  } else if (h === '/locked') {
+    enterLocked();
   } else {
     cur.view = 'all'; showView(); renderGrid();
   }
@@ -426,6 +433,7 @@ function applyFilters(list) {
 function gridData() {
   if (cur.view === 'album') return cur.items;
   if (cur.view === 'trash') return applySearch(trashList);
+  if (cur.view === 'locked') return applySearch(lockedList);
   let base;
   if (cur.view === 'highlights') base = media.filter((m) => m.favorite);
   else if (cur.view === 'archive') base = archiveList;
@@ -439,6 +447,7 @@ function renderGrid() {
   $('gridTitle').textContent = TITLES[cur.view] || 'Poze';
   $('emptyTrashBtn').hidden = cur.view !== 'trash' || trashList.length === 0;
   $('trashNote').hidden = cur.view !== 'trash';
+  if ($('lockCloseBtn')) $('lockCloseBtn').hidden = cur.view !== 'locked';
   renderChips();
   renderMemories();
   buildGallery($('grid'), list);
@@ -793,6 +802,13 @@ function renderSelActions() {
     }));
     return;
   }
+  if (cur.view === 'locked') {
+    box.appendChild(selBtn('lock_open', 'Scoate din folderul blocat',
+      () => bulk((id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }), 'Scos din folderul blocat')));
+    box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => { location.href = '/api/download?ids=' + [...selected].join(','); }));
+    if (isAdmin) box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+    return;
+  }
   if (cur.view === 'archive') {
     box.appendChild(selBtn('unarchive', 'Scoate din arhivă', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }), 'Scos din arhivă')));
   } else {
@@ -802,6 +818,11 @@ function renderSelActions() {
     }));
     box.appendChild(selBtn('star', 'Marchează favorite', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: true } }), 'Adăugat la favorite')));
     box.appendChild(selBtn('inventory_2', 'Arhivează', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat')));
+    box.appendChild(selBtn('lock', 'Mută în folderul blocat', async () => {
+      const ok = await ensureLockOpen();
+      if (!ok) return;
+      bulk((id) => api('/api/media/' + id + '/lock', { method: 'POST' }), 'Mutat în folderul blocat');
+    }));
   }
   if (cur.view === 'album') {
     box.appendChild(selBtn('remove', 'Scoate din album', async () => {
@@ -833,6 +854,7 @@ async function bulk(fn, okMsg) {
   await loadAlbums();
   if (cur.view === 'archive') await loadArchive();
   if (cur.view === 'trash') await loadTrash();
+  if (cur.view === 'locked') { try { lockedList = await api('/api/media?filter=locked'); } catch {} }
   if (cur.view === 'album') await loadAlbum(cur.albumId);
   clearSel();
   rerender();
@@ -1017,6 +1039,81 @@ function openCoverPicker() {
   $('pickerModal').hidden = false;
 }
 
+// ─── Folder blocat (PIN) ──────────────────────────────────────────────────
+let lockGateResolve = null;
+async function enterLocked() {
+  let stt;
+  try { stt = await api('/api/lock/status'); } catch { location.hash = '#/'; return; }
+  lockConfigured = stt.configured; lockOpen = stt.open;
+  if (!lockConfigured) {
+    const ok = await openLockGate('setup');
+    if (!ok) { location.hash = '#/'; return; }
+  } else if (!lockOpen) {
+    const ok = await openLockGate('unlock');
+    if (!ok) { location.hash = '#/'; return; }
+  }
+  lockOpen = true;
+  cur.view = 'locked';
+  showView();
+  updateNav();
+  try { lockedList = await api('/api/media?filter=locked'); } catch { lockedList = []; }
+  renderGrid();
+}
+
+function openLockGate(kind) {
+  return new Promise((resolve) => {
+    lockGateResolve = resolve;
+    const setup = kind === 'setup';
+    $('lockGateTitle').innerHTML = '<span class="msi">lock</span> ' + (setup ? 'Setează un PIN' : 'Folder blocat');
+    $('lockGateDesc').textContent = setup
+      ? 'Alege un PIN de 4–12 cifre. Îți va fi cerut ca să deschizi folderul blocat.'
+      : 'Introdu PIN-ul ca să vezi ce e aici.';
+    $('lockPin').value = ''; $('lockPin2').value = '';
+    $('lockPin2').hidden = !setup;
+    $('lockGateErr').hidden = true;
+    $('lockGateOk').textContent = setup ? 'Setează' : 'Deschide';
+    $('lockGate').hidden = false;
+    setTimeout(() => $('lockPin').focus(), 30);
+    $('lockGate').dataset.kind = kind;
+  });
+}
+function resolveLockGate(v) {
+  $('lockGate').hidden = true;
+  const r = lockGateResolve; lockGateResolve = null;
+  if (r) r(v);
+}
+async function submitLockGate() {
+  const kind = $('lockGate').dataset.kind;
+  const pin = $('lockPin').value.trim();
+  const err = (m) => { $('lockGateErr').textContent = m; $('lockGateErr').hidden = false; };
+  if (!/^[0-9]{4,12}$/.test(pin)) return err('PIN-ul trebuie să aibă 4–12 cifre.');
+  try {
+    if (kind === 'setup') {
+      if (pin !== $('lockPin2').value.trim()) return err('PIN-urile nu se potrivesc.');
+      await api('/api/lock/setup', { method: 'POST', body: { pin } });
+    } else {
+      await api('/api/lock/unlock', { method: 'POST', body: { pin } });
+    }
+    lockConfigured = true; lockOpen = true;
+    resolveLockGate(true);
+  } catch (e) { err(e.message || 'PIN greșit'); }
+}
+async function closeLock(silent) {
+  lockOpen = false;
+  try { await api('/api/lock/close', { method: 'POST' }); } catch {}
+  if (!silent) { toast('Folder blocat'); location.hash = '#/'; }
+}
+// Asigură folderul deschis (cere PIN dacă e nevoie). Rezolvă true/false.
+async function ensureLockOpen() {
+  if (lockOpen) return true;
+  try {
+    const stt = await api('/api/lock/status');
+    lockConfigured = stt.configured; lockOpen = stt.open;
+  } catch { return false; }
+  if (lockOpen) return true;
+  return openLockGate(lockConfigured ? 'unlock' : 'setup');
+}
+
 // ─── Lightbox ──────────────────────────────────────────────────────────────
 const lb = $('lightbox');
 const lbStage = $('lbStage');
@@ -1138,6 +1235,8 @@ function showLb() {
   lb.querySelector('.lb-fav').hidden = trash;
   lb.querySelector('.lb-archive').hidden = trash;
   lb.querySelector('.lb-edit').hidden = trash || it.type === 'video';
+  lb.querySelector('.lb-share').hidden = trash || cur.view === 'locked';
+  lb.querySelector('.lb-archive').hidden = trash || cur.view === 'locked';
   lb.querySelector('.lb-del').hidden = trash || !isAdmin;
   lb.querySelector('.lb-slideshow').hidden = trash;
   lb.querySelector('.lb-share').hidden = trash;
@@ -1500,6 +1599,17 @@ function wire() {
 
   $('selCancel').onclick = clearSel;
 
+  // ─── Folder blocat ──────────────────────────────────────────────────────
+  $('lockGateOk').onclick = submitLockGate;
+  $('lockGateCancel').onclick = () => resolveLockGate(false);
+  $('lockPin').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if ($('lockPin2').hidden) submitLockGate(); else $('lockPin2').focus();
+  });
+  $('lockPin2').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitLockGate(); } });
+  $('lockCloseBtn').onclick = () => closeLock(false);
+
   $('chooserNew').onclick = async () => {
     const name = prompt('Nume album nou');
     if (!name || !name.trim()) return;
@@ -1607,6 +1717,7 @@ function wire() {
   document.addEventListener('keydown', (e) => {
     // Modalele au prioritate, chiar și peste lightbox
     if (e.key === 'Escape') {
+      if (!$('lockGate').hidden) { resolveLockGate(false); return; }
       if (!$('helpModal').hidden) { $('helpModal').hidden = true; return; }
       if (!$('shareModal').hidden) { $('shareModal').hidden = true; return; }
       if (!$('pickerModal').hidden) { $('pickerModal').hidden = true; return; }
