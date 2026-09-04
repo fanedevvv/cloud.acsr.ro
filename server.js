@@ -26,7 +26,7 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes, backfillExif } = require('./lib/media');
+const { backfillHashes, backfillExif, backfillPreviews } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
 
@@ -210,6 +210,7 @@ function purgeTrash() {
   for (const r of rows) {
     fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
+    fs.rmSync(path.join(THUMB_DIR, `${r.id}.preview.webp`), { force: true });
     db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
   }
   if (rows.length) console.log(`coș: șterse definitiv ${rows.length} elemente`);
@@ -805,6 +806,7 @@ app.post('/api/trash/empty', requireAdmin, checkCsrf, (req, res) => {
   for (const r of rows) {
     fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
+    fs.rmSync(path.join(THUMB_DIR, `${r.id}.preview.webp`), { force: true });
     db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
   }
   res.json({ ok: true, deleted: rows.length });
@@ -864,6 +866,15 @@ function mediaServeGuard(req, res, next) {
 }
 app.get('/media/:id/thumb', requireAuth, mediaServeGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/media/:id/full', requireAuth, mediaServeGuard, (req, res) => sendFull(req.mediaRow, res));
+app.get('/media/:id/preview', requireAuth, mediaServeGuard, (req, res) => {
+  const p = path.join(THUMB_DIR, req.mediaRow.id + '.preview.webp');
+  if (fs.existsSync(p)) {
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.type('image/webp');
+    return fs.createReadStream(p).pipe(res);
+  }
+  return sendFull(req.mediaRow, res);
+});
 
 // ─── Editare video (ffmpeg) + cadru -> poză ──────────────────────────────
 const vedit = require('./lib/vedit');
@@ -915,6 +926,7 @@ app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
 
   fs.rmSync(path.join(ORIGINAL_DIR, row.stored_name), { force: true });
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.webp`), { force: true });
+  fs.rmSync(path.join(THUMB_DIR, `${row.id}.preview.webp`), { force: true });
   db.prepare('DELETE FROM media WHERE id = ?').run(row.id); // cascade album_items
   res.json({ ok: true });
 });
@@ -1161,6 +1173,11 @@ function shareMediaGuard(req, res, next) {
 
 app.get('/s/:token/media/:id/thumb', shareLimiter, shareMediaGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/s/:token/media/:id/full', shareLimiter, shareMediaGuard, (req, res) => sendFull(req.mediaRow, res));
+app.get('/s/:token/media/:id/preview', shareLimiter, shareMediaGuard, (req, res) => {
+  const p = path.join(THUMB_DIR, req.mediaRow.id + '.preview.webp');
+  if (fs.existsSync(p)) { res.set('Cache-Control', 'public, max-age=86400'); res.type('image/webp'); return fs.createReadStream(p).pipe(res); }
+  return sendFull(req.mediaRow, res);
+});
 
 const SHARE_HTML_PATH = path.join(__dirname, 'public', 'share.html');
 const htmlEsc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1293,6 +1310,7 @@ app.listen(PORT, '127.0.0.1', () => {
   Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
   Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
   setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
+  setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
   setTimeout(() => {
     try { backup.checkIntegrity(ORIGINAL_DIR); } catch {}
     backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});

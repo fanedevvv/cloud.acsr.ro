@@ -251,7 +251,8 @@ function show() {
     lbStage.appendChild(v);
   } else {
     const im = document.createElement('img');
-    im.src = base + '/media/' + it.id + '/full';
+    im.src = base + '/media/' + it.id + '/preview';
+    im.dataset.full = base + '/media/' + it.id + '/full';
     lbStage.appendChild(im);
   }
   lbDl.href = base + '/media/' + it.id + '/full';
@@ -324,6 +325,7 @@ function zoomAt(factor, cx, cy) {
   zoom.y = oy - (oy - zoom.y) * k;
   zoom.s = ns;
   if (zoom.s === 1) { zoom.x = 0; zoom.y = 0; }
+  if (zoom.s > 1.4 && im.dataset.full && im.src !== im.dataset.full) { im.src = im.dataset.full; im.removeAttribute('data-full'); }
   applyZoom();
 }
 function initZoom() {

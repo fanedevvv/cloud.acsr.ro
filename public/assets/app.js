@@ -1496,6 +1496,11 @@ function zoomAt(factor, cx, cy) {
   zoom.y = oy - (oy - zoom.y) * k;
   zoom.s = ns;
   if (zoom.s === 1) { zoom.x = 0; zoom.y = 0; }
+  // la zoom peste 1.4x încarcă originalul (preview-ul devine moale)
+  if (zoom.s > 1.4 && im.dataset.full && im.src !== im.dataset.full) {
+    im.src = im.dataset.full;
+    im.removeAttribute('data-full');
+  }
   applyZoom();
 }
 function initLightboxZoom() {
@@ -1552,7 +1557,8 @@ function showLb() {
     lbStage.appendChild(v);
   } else {
     const im = document.createElement('img');
-    im.src = '/media/' + it.id + '/full';
+    im.src = '/media/' + it.id + '/preview';   // 1600px webp — încarcă rapid
+    im.dataset.full = '/media/' + it.id + '/full';
     im.alt = it.originalName || '';
     lbStage.appendChild(im);
   }
