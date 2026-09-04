@@ -367,6 +367,37 @@ app.get('/api/optimize/status/:id', requireAuth, (req, res) => {
   res.json(job);
 });
 
+// ─── Căutare inteligentă (CLIP + OCR) ─────────────────────────────────────
+const search = require('./lib/search');
+
+app.get('/api/search', requireAuth, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  let ids = [];
+  try { ids = await search.search(q, { limit: 150 }); } catch (e) { return res.status(500).json({ error: 'căutare eșuată' }); }
+  const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ? AND deleted_at IS NULL AND archived = 0 AND locked = 0`);
+  const rows = ids.map((id) => get.get(id)).filter(Boolean).map(mapRow);
+  res.json(rows);
+});
+
+app.get('/api/search/stats', requireAuth, (req, res) => {
+  try { res.json(search.stats()); } catch { res.json({ embed: 0, ocr: 0, total: 0 }); }
+});
+
+app.post('/api/search/index', requireAdmin, checkCsrf, jsonBody, (req, res) => {
+  const cur = search.current();
+  if (cur && !cur.finishedAt && cur.phase !== 'error') return res.status(409).json({ error: 'indexarea rulează deja' });
+  const j = search.newJob();
+  search.runIndex(j, { ocr: !!(req.body && req.body.ocr) }).catch((e) => console.error('index:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/search/index/status/:id', requireAuth, (req, res) => {
+  const j = search.getJob(String(req.params.id));
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(j);
+});
+
 app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;

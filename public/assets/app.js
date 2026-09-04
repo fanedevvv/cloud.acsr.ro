@@ -26,6 +26,9 @@ let trashList = [];
 let lockedList = [];
 let lockOpen = false;
 let lockConfigured = false;
+let searchResults = null;
+let searchSeq = 0;
+let searchT = null;
 let albums = [];
 let memories = [];
 let stats = null;
@@ -156,6 +159,7 @@ function applyRole() {
   const tl = document.querySelector('.side-link[data-view="trash"]');
   if (tl) tl.hidden = !isAdmin;
   hide('optimizeBtn', !isAdmin);
+  hide('indexBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
   hide('logoutBtn', !isAdmin);
@@ -299,7 +303,8 @@ function contentWidth(el) {
   return w - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
 }
 
-function buildGallery(container, list) {
+function buildGallery(container, list, opts) {
+  const flat = opts && opts.flat;
   container._list = list;
   container.textContent = '';
   container.dataset.zoom = String(gridZoom);
@@ -308,11 +313,13 @@ function buildGallery(container, list) {
 
   const z = ZOOM[gridZoom] || ZOOM[1];
   const frag = document.createDocumentFragment();
-  for (const [, items] of groupBy(list, z.group)) {
+  const groups = flat ? [['', list]] : [...groupBy(list, z.group)];
+  for (const [, items] of groups) {
+    if (!items.length) continue;
     const day = document.createElement('section');
     day.className = 'j-day';
     day.dataset.date = items[0].takenAt || items[0].createdAt;
-    day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id), z.group));
+    if (!flat) day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id), z.group));
     for (const r of justify(items, width, th)) {
       const rowEl = document.createElement('div');
       rowEl.className = 'j-row';
@@ -408,6 +415,24 @@ function pickTile(id, shift) {
   lastSelId = id;
 }
 
+function isSearching() {
+  return !!(query && query.length >= 2 && searchResults &&
+    (cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive'));
+}
+
+function scheduleServerSearch(q) {
+  clearTimeout(searchT);
+  const seq = ++searchSeq;
+  searchT = setTimeout(async () => {
+    try {
+      const rows = await api('/api/search?q=' + encodeURIComponent(q));
+      if (seq !== searchSeq) return;
+      searchResults = rows;
+      if (FLAT.includes(cur.view)) renderGrid();
+    } catch { /* rămâne filtrarea locală */ }
+  }, 320);
+}
+
 function applySearch(list) {
   if (!query) return list;
   const q = query.toLowerCase();
@@ -431,9 +456,13 @@ function applyFilters(list) {
 }
 
 function gridData() {
-  if (cur.view === 'album') return cur.items;
+  if (cur.view === 'album') return applySearch(cur.items);
   if (cur.view === 'trash') return applySearch(trashList);
   if (cur.view === 'locked') return applySearch(lockedList);
+  // căutare inteligentă pe server (semantic + OCR) pentru vizualizările globale
+  if (query && query.length >= 2 && searchResults && (cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive')) {
+    return searchResults;
+  }
   let base;
   if (cur.view === 'highlights') base = media.filter((m) => m.favorite);
   else if (cur.view === 'archive') base = archiveList;
@@ -444,16 +473,17 @@ function gridData() {
 // ─── Randare ───────────────────────────────────────────────────────────────
 function renderGrid() {
   const list = gridData();
-  $('gridTitle').textContent = TITLES[cur.view] || 'Poze';
+  const searching = isSearching();
+  $('gridTitle').textContent = searching ? 'Rezultate: „' + query + '”' : (TITLES[cur.view] || 'Poze');
   $('emptyTrashBtn').hidden = cur.view !== 'trash' || trashList.length === 0;
   $('trashNote').hidden = cur.view !== 'trash';
   if ($('lockCloseBtn')) $('lockCloseBtn').hidden = cur.view !== 'locked';
   renderChips();
   renderMemories();
-  buildGallery($('grid'), list);
+  buildGallery($('grid'), list, { flat: searching });
   $('gridEmpty').hidden = list.length > 0;
-  $('gridEmptyText').textContent = EMPTY[cur.view] || 'Gol.';
-  buildTimeRail(list.length);
+  $('gridEmptyText').textContent = searching ? 'Niciun rezultat.' : (EMPTY[cur.view] || 'Gol.');
+  buildTimeRail(searching ? 0 : list.length);
 }
 
 // ─── Rail de dată (fast-scroll, stil Google Photos) ────────────────────────
@@ -577,7 +607,7 @@ function buildTimeRail(count) {
 }
 
 function renderChips() {
-  const show = cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive';
+  const show = !isSearching() && (cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive');
   $('chips').hidden = !show;
   if (!show) return;
   document.querySelectorAll('.chip[data-type]').forEach((b) => b.classList.toggle('on', b.dataset.type === filterType));
@@ -1614,10 +1644,13 @@ function wire() {
   $('search').addEventListener('input', (e) => {
     query = e.target.value.trim();
     $('searchClear').hidden = !query;
+    if (!query || query.length < 2) { searchResults = null; searchSeq++; }
+    else scheduleServerSearch(query);
     if (FLAT.includes(cur.view)) renderGrid();
   });
   $('searchClear').onclick = () => {
     $('search').value = ''; query = ''; $('searchClear').hidden = true;
+    searchResults = null; searchSeq++;
     if (FLAT.includes(cur.view)) renderGrid();
   };
 
@@ -1845,6 +1878,53 @@ function wire() {
   };
 
   initLightboxZoom();
+
+  // ─── Indexare căutare inteligentă (CLIP + OCR) ──────────────────────────
+  let idxTimer = null;
+  const stopIdx = () => { if (idxTimer) { clearInterval(idxTimer); idxTimer = null; } };
+  $('indexBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    $('idxProgress').hidden = true;
+    $('idxStart').disabled = false;
+    $('idxOcr').checked = false;
+    $('idxHave').textContent = '';
+    $('idxModal').hidden = false;
+    try {
+      const st = await api('/api/search/stats');
+      $('idxHave').textContent = st.embed + '/' + st.total + ' indexate' + (st.ocr ? ' · ' + st.ocr + ' cu OCR' : '');
+    } catch {}
+  };
+  $('idxClose').onclick = () => { stopIdx(); $('idxModal').hidden = true; };
+  $('idxStart').onclick = async () => {
+    $('idxStart').disabled = true;
+    $('idxProgress').hidden = false;
+    $('idxBar').style.width = '3%';
+    $('idxStat').textContent = 'Se pornește… (prima dată descarcă modelul)';
+    let jobId;
+    try {
+      const d = await api('/api/search/index', { method: 'POST', body: { ocr: $('idxOcr').checked } });
+      jobId = d.jobId;
+    } catch (e) { $('idxStat').textContent = e.message; $('idxStart').disabled = false; return; }
+    stopIdx();
+    idxTimer = setInterval(async () => {
+      let j;
+      try { j = await api('/api/search/index/status/' + jobId); } catch { return; }
+      const PH = { starting: 'Se pregătește…', scanning: 'Se scanează…', running: 'Se analizează', done: 'Gata', error: 'Eroare' };
+      const pct = j.total ? (j.done / j.total) * 100 : (j.phase === 'done' ? 100 : 6);
+      $('idxBar').style.width = Math.max(3, pct).toFixed(1) + '%';
+      const bits = [PH[j.phase] || j.phase];
+      if (j.total) bits.push(j.done + '/' + j.total);
+      if (j.embedded) bits.push(j.embedded + ' imagini');
+      if (j.ocred) bits.push(j.ocred + ' OCR');
+      $('idxStat').textContent = bits.join('  ·  ');
+      if (j.phase === 'done' || j.phase === 'error') {
+        stopIdx();
+        $('idxStart').disabled = false;
+        toast(j.phase === 'done' ? ('Indexare gata: ' + j.embedded + ' imagini') : ('Indexare cu erori: ' + (j.error || '')));
+      }
+    }, 1500);
+  };
 
   // ─── Import Google Takeout ───────────────────────────────────────────────
   let importTimer = null;
