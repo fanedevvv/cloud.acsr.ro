@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=53">
+  <link rel="stylesheet" href="/assets/styles.css?v=54">
 </head>
 <body>
   <div class="app">
@@ -66,7 +66,9 @@
             <button class="menu-item theme-opt" data-theme="dark"><span class="msi">dark_mode</span>Întunecat</button>
             <button class="menu-item theme-opt" data-theme="system"><span class="msi">brightness_auto</span>Sistem</button>
             <div class="menu2-sep"></div>
-            <a id="adminLoginBtn" class="menu-item" href="/login" hidden><span class="msi">shield_person</span>Conectează-te ca admin</a>
+            <a id="adminLoginBtn" class="menu-item" href="/login"><span class="msi">login</span>Conectare / Cont nou</a>
+            <div id="acctWho" class="menu2-label" hidden></div>
+            <button id="accountBtn" class="menu-item" hidden><span class="msi">manage_accounts</span>Contul meu</button>
             <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Import Google Takeout</button>
             <button id="optimizeBtn" class="menu-item"><span class="msi">compress</span>Optimizează spațiul</button>
             <button id="indexBtn" class="menu-item"><span class="msi">saved_search</span>Indexează pentru căutare</button>
@@ -196,6 +198,7 @@
         <div class="album-title-wrap">
           <h1 id="albumTitle" tabindex="0" title="Apasă pentru a edita titlul"></h1>
           <div id="albumSub" class="album-sub-line muted"></div>
+          <div id="albumOwner" class="album-owner-line" hidden></div>
         </div>
         <div id="albumGrid" class="j-scroll"></div>
         <div id="albumEmpty" class="empty" hidden><span class="msi big">add_photo_alternate</span><p>Album gol.</p></div>
@@ -377,6 +380,29 @@
     </div>
   </div>
 
+  <div id="accountModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Contul meu</h2>
+      <div class="acc-row">
+        <img id="accAvatar" class="acc-avatar" alt="">
+        <div>
+          <label class="acc-lbl">Nume afișat</label>
+          <input id="accName" type="text" maxlength="40" placeholder="Numele tău">
+          <div class="acc-file">
+            <input id="accAvatarInput" type="file" accept="image/*" hidden>
+            <button id="accAvatarBtn" class="btn ghost" type="button"><span class="msi">add_a_photo</span>Schimbă poza</button>
+          </div>
+        </div>
+      </div>
+      <div id="accErr" class="lock-err" hidden></div>
+      <div class="modal-actions">
+        <span id="accUser" class="muted"></span>
+        <span><button id="accSave" class="btn primary">Salvează</button>
+        <button id="accClose" class="btn">Închide</button></span>
+      </div>
+    </div>
+  </div>
+
   <div id="healthModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Stare & backup</h2>
@@ -435,9 +461,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=53"></script>
-  <script src="/assets/veditor.js?v=53"></script>
-  <script src="/assets/app.js?v=53"></script>
-  <script src="/assets/pwa.js?v=53"></script>
+  <script src="/assets/editor.js?v=54"></script>
+  <script src="/assets/veditor.js?v=54"></script>
+  <script src="/assets/app.js?v=54"></script>
+  <script src="/assets/pwa.js?v=54"></script>
 </body>
 </html>

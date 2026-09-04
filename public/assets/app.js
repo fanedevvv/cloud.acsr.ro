@@ -34,6 +34,7 @@ let albums = [];
 let memories = [];
 let stats = null;
 let isAdmin = false;
+let me = null;
 let query = '';
 let filterType = 'all';
 let filterFav = false;
@@ -63,6 +64,7 @@ let slideTimer = null;
     const info = await r.json();
     csrf = info.token;
     isAdmin = info.role === 'admin';
+    me = info.user || null;
   } catch {
     return location.replace('/login');
   }
@@ -169,10 +171,21 @@ function applyRole() {
   hide('healthBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
-  hide('logoutBtn', !isAdmin);
-  hide('adminLoginBtn', isAdmin);
+  hide('logoutBtn', !(isAdmin || me));
+  hide('adminLoginBtn', !!me);
+  hide('accountBtn', !me);
+  const who = document.getElementById('acctWho');
+  if (who) { who.hidden = !me; who.textContent = me ? me.displayName : ''; }
   const av = document.getElementById('acctBtn');
-  if (av) { av.textContent = isAdmin ? 'A' : 'C'; av.title = isAdmin ? 'Administrator' : 'Vizitator'; }
+  if (av) {
+    if (me) {
+      av.innerHTML = '<img src="' + me.avatar + '" alt="">';
+      av.title = me.displayName;
+    } else {
+      av.textContent = isAdmin ? 'A' : 'C';
+      av.title = isAdmin ? 'Administrator' : 'Vizitator';
+    }
+  }
 }
 
 // ─── Router ─────────────────────────────────────────────────────────────────
@@ -763,6 +776,14 @@ function renderAlbum() {
   if (range) parts.push(range);
   if (a.shareToken) parts.push('partajat');
   $('albumSub').textContent = parts.join('  ·  ');
+  const oc = $('albumOwner');
+  if (oc) {
+    if (a.owner && a.owner.name) {
+      oc.hidden = false;
+      oc.innerHTML = (a.owner.avatar ? '<img src="' + a.owner.avatar + '" alt="">' : '<span class="msi">person</span>')
+        + '<span>de la <b>' + escapeHtml(a.owner.name) + '</b></span>';
+    } else oc.hidden = true;
+  }
   const ct = $('albumCommentsToggle'), cc = $('albumContribToggle');
   if (ct) ct.classList.toggle('on', a.allowComments !== false);
   if (cc) cc.classList.toggle('on', !!a.allowContrib);
@@ -835,6 +856,13 @@ function albumCard(a) {
   sub.textContent = a.count + (a.count === 1 ? ' element' : ' elemente') + (a.shareToken ? ' · partajat' : '');
   meta.appendChild(nm);
   meta.appendChild(sub);
+  if (a.owner) {
+    const own = document.createElement('div');
+    own.className = 'album-owner';
+    own.innerHTML = (a.owner.avatar ? '<img src="' + a.owner.avatar + '" alt="">' : '<span class="msi">person</span>')
+      + '<span>' + escapeHtml(a.owner.name) + '</span>';
+    meta.appendChild(own);
+  }
   card.appendChild(cover);
   card.appendChild(meta);
 
@@ -2151,6 +2179,54 @@ function toast(msg, opts) {
 window.__cloudUpload = (files) => uploadFiles([...files]);
 window.__api = api;
 
+// ─── Contul meu ───────────────────────────────────────────────────────────
+function wireAccount() {
+  const acc = $('accountModal');
+  if (!acc) return;
+  $('accountBtn').onclick = (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    if (!me) { location.href = '/login'; return; }
+    $('accName').value = me.displayName;
+    $('accAvatar').src = me.avatar + '?t=' + Date.now();
+    $('accUser').textContent = '@' + me.username;
+    $('accErr').hidden = true;
+    acc.hidden = false;
+  };
+  $('accClose').onclick = () => { acc.hidden = true; };
+  $('accAvatarBtn').onclick = () => $('accAvatarInput').click();
+  $('accAvatarInput').addEventListener('change', async () => {
+    const file = $('accAvatarInput').files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('avatar', file);
+    try {
+      const r = await fetch('/api/account/avatar', { method: 'POST', headers: { 'x-csrf-token': csrf }, body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'a eșuat');
+      me.hasAvatar = true;
+      $('accAvatar').src = d.avatar;
+      applyRole();
+      toast('Poză salvată');
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+    $('accAvatarInput').value = '';
+  });
+  $('accSave').onclick = async () => {
+    const name = $('accName').value.trim();
+    if (!name) { $('accErr').textContent = 'Numele nu poate fi gol'; $('accErr').hidden = false; return; }
+    try {
+      const d = await api('/api/account', { method: 'PATCH', body: { displayName: name } });
+      me = d.user;
+      applyRole();
+      acc.hidden = true;
+      await loadAlbums();
+      if (cur.view === 'albums') renderAlbums();
+      if (cur.view === 'album') renderAlbum();
+      toast('Salvat');
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
+}
+
 // ─── Wiring ────────────────────────────────────────────────────────────────
 function wire() {
   const openSide = () => { $('side').classList.add('open'); $('sideScrim').hidden = false; };
@@ -2436,6 +2512,7 @@ function wire() {
 
   initLightboxZoom();
   wireSlideshow();
+  wireAccount();
 
   // ─── Stare & backup ────────────────────────────────────────────────────
   async function loadHealth() {

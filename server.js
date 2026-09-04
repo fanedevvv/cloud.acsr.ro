@@ -201,6 +201,11 @@ function albumSummary(a) {
     shareToken: a.share_token || null,
     allowComments: a.allow_comments == null ? true : !!a.allow_comments,
     allowContrib: !!a.allow_contrib,
+    owner: {
+      id: a.owner_id || null,
+      name: a.owner_name || 'Vizitator',
+      avatar: a.owner_id ? '/api/users/' + a.owner_id + '/avatar' : null,
+    },
   };
 }
 
@@ -257,12 +262,74 @@ const loginLimiter = rateLimit({
   message: { error: 'prea multe încercări, reîncearcă mai târziu' },
 });
 
+// ─── Conturi ──────────────────────────────────────────────────────────────
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
+const AVATAR_DIR = path.join(THUMB_DIR, 'avatars');
+fs.mkdirSync(AVATAR_DIR, { recursive: true });
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe conturi de la acest IP' } });
+const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+
+function currentUser(req) {
+  if (!req.session || !req.session.userId) return null;
+  return db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId) || null;
+}
+function pubUser(u) {
+  if (!u) return null;
+  return { id: u.id, username: u.username, displayName: u.display_name, hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, avatar: '/api/users/' + u.id + '/avatar' };
+}
+function requireAccount(req, res, next) {
+  if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
+  return res.status(401).json({ error: 'creează-ți un cont sau conectează-te' });
+}
+
+app.post('/api/register', registerLimiter, express.json({ limit: '4kb' }), async (req, res) => {
+  const b = req.body || {};
+  const username = String(b.username || '').trim();
+  const password = String(b.password || '');
+  const displayName = String(b.displayName || username).trim().replace(/\s+/g, ' ').slice(0, 40) || username;
+  if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'utilizator: 3–24 caractere (litere, cifre, . _ -)' });
+  if (password.length < 6) return res.status(400).json({ error: 'parola: minim 6 caractere' });
+  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'utilizatorul există deja' });
+  const first = db.prepare('SELECT COUNT(*) n FROM users').get().n === 0;
+  const id = crypto.randomUUID();
+  db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, username, await bcrypt.hash(password, 10), displayName, first ? 1 : 0, new Date().toISOString());
+  req.session.regenerate((err) => {
+    if (err) return res.status(500).json({ error: 'eroare server' });
+    req.session.authed = true;
+    req.session.userId = id;
+    req.session.displayName = displayName;
+    req.session.role = first ? 'admin' : 'user';
+    req.session.csrf = crypto.randomBytes(32).toString('hex');
+    req.session.save(() => res.json({ ok: true, user: pubUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) }));
+  });
+});
+
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
+  const username = String(req.body && req.body.username || '').trim();
   const password = String(req.body && req.body.password || '');
+
+  // Cont de utilizator
+  if (username) {
+    const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    let ok = false;
+    try { ok = u && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
+    if (!ok) return res.status(401).json({ error: 'utilizator sau parolă greșită' });
+    return req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: 'eroare server' });
+      req.session.authed = true;
+      req.session.userId = u.id;
+      req.session.displayName = u.display_name;
+      req.session.role = u.is_admin ? 'admin' : 'user';
+      req.session.csrf = crypto.randomBytes(32).toString('hex');
+      req.session.save(() => res.json({ ok: true, role: req.session.role, user: pubUser(u) }));
+    });
+  }
+
+  // Parola veche de administrator (fără utilizator)
   let ok = false;
   try { ok = await bcrypt.compare(password, PASSWORD_HASH); } catch { ok = false; }
   if (!ok) return res.status(401).json({ error: 'parolă greșită' });
-
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
@@ -270,6 +337,48 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
     req.session.csrf = crypto.randomBytes(32).toString('hex');
     req.session.save(() => res.json({ ok: true, role: 'admin' }));
   });
+});
+
+app.get('/api/me', (req, res) => res.json({ user: pubUser(currentUser(req)), role: req.session && req.session.role || 'guest' }));
+
+app.patch('/api/account', requireAccount, checkCsrf, jsonBody, (req, res) => {
+  const u = currentUser(req);
+  if (!u) return res.status(400).json({ error: 'niciun cont' });
+  const name = String((req.body && req.body.displayName) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!name) return res.status(400).json({ error: 'nume gol' });
+  db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
+  db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
+  req.session.displayName = name;
+  res.json({ ok: true, user: pubUser(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+});
+
+app.post('/api/account/avatar', requireAccount, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
+  const u = currentUser(req);
+  if (!u || !req.file) { if (req.file) try { fs.rmSync(req.file.path, { force: true }); } catch {} return res.status(400).json({ error: 'lipsește imaginea' }); }
+  try {
+    await require('sharp')(req.file.path, { failOn: 'none' }).rotate()
+      .resize(200, 200, { fit: 'cover' }).webp({ quality: 82 }).toFile(path.join(AVATAR_DIR, u.id + '.webp'));
+    db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
+    res.json({ ok: true, avatar: '/api/users/' + u.id + '/avatar?t=' + Date.now() });
+  } catch (e) { res.status(400).json({ error: 'imagine invalidă' }); }
+  finally { try { fs.rmSync(req.file.path, { force: true }); } catch {} }
+});
+
+app.get('/api/users/:id/avatar', (req, res) => {
+  const u = db.prepare('SELECT id, display_name, has_avatar FROM users WHERE id = ?').get(String(req.params.id));
+  const p = u && u.has_avatar ? path.join(AVATAR_DIR, u.id + '.webp') : null;
+  if (p && fs.existsSync(p)) {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.type('image/webp');
+    return fs.createReadStream(p).pipe(res);
+  }
+  // inițiale ca SVG
+  const nm = (u && u.display_name || '?').trim();
+  const ini = nm.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+  const hue = [...nm].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.type('image/svg+xml');
+  res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="hsl(' + hue + ',45%,55%)"/><text x="100" y="100" dy="0.35em" font-family="Roboto,sans-serif" font-size="88" fill="#fff" text-anchor="middle">' + ini + '</text></svg>');
 });
 
 app.post('/api/logout', (req, res) => {
@@ -281,7 +390,7 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/csrf', (req, res) => {
   if (!req.session.csrf) req.session.csrf = crypto.randomBytes(32).toString('hex');
-  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest' }));
+  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(currentUser(req)) }));
 });
 
 // ─── Folder blocat (PIN) ───────────────────────────────────────────────────
@@ -974,11 +1083,24 @@ app.get('/api/albums', requireAuth, (req, res) => {
 app.post('/api/albums', requireAuth, checkCsrf, jsonBody, (req, res) => {
   const name = String(req.body && req.body.name || '').trim().slice(0, 120);
   if (!name) return res.status(400).json({ error: 'nume gol' });
+  const u = currentUser(req);
   const id = crypto.randomUUID();
-  db.prepare('INSERT INTO albums (id, name, created_at) VALUES (?, ?, ?)')
-    .run(id, name, new Date().toISOString());
+  db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
+    .run(id, name, new Date().toISOString(), u ? u.id : null, u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'));
   res.json(albumSummary(getAlbum(id)));
 });
+
+// Poate edita/șterge albumul: proprietarul, un admin, sau oricine conectat pentru
+// albumele fără proprietar (create înainte de sistemul de conturi).
+function requireAlbumOwner(req, res, next) {
+  const a = getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const isAdmin = req.session && req.session.role === 'admin';
+  const isOwner = a.owner_id && req.session && req.session.userId === a.owner_id;
+  const legacy = !a.owner_id && req.session && req.session.authed;
+  if (isAdmin || isOwner || legacy) { req.album = a; return next(); }
+  return res.status(403).json({ error: 'doar cel care a creat albumul îl poate modifica' });
+}
 
 app.get('/api/albums/:id', requireAuth, (req, res) => {
   const a = getAlbum(req.params.id);
@@ -986,7 +1108,7 @@ app.get('/api/albums/:id', requireAuth, (req, res) => {
   res.json({ album: albumSummary(a), items: mediaInAlbum(a.id) });
 });
 
-app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.patch('/api/albums/:id', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const b = req.body || {};
@@ -1010,14 +1132,14 @@ app.patch('/api/albums/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
   res.json(albumSummary(getAlbum(a.id)));
 });
 
-app.delete('/api/albums/:id', requireAdmin, checkCsrf, (req, res) => {
+app.delete('/api/albums/:id', requireAlbumOwner, checkCsrf, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items
   res.json({ ok: true });
 });
 
-app.post('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const ids = Array.isArray(req.body && req.body.ids)
@@ -1036,7 +1158,7 @@ app.post('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) =
   res.json({ added: run(ids) });
 });
 
-app.delete('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.delete('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const ids = Array.isArray(req.body && req.body.ids)
@@ -1051,7 +1173,7 @@ app.delete('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res)
 });
 
 // Creează / rotește linkul de partajare
-app.post('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
+app.post('/api/albums/:id/share', requireAlbumOwner, checkCsrf, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const token = crypto.randomBytes(24).toString('base64url');
@@ -1060,7 +1182,7 @@ app.post('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
   res.json({ token, path: `/s/${token}` });
 });
 
-app.delete('/api/albums/:id/share', requireAuth, checkCsrf, (req, res) => {
+app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
@@ -1085,7 +1207,7 @@ app.get('/api/albums/:id/comments', requireAuth, (req, res) => {
   res.json(rows.map((c) => ({ id: c.id, mediaId: c.media_id || null, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.created_at })));
 });
 
-app.delete('/api/albums/:id/comments/:cid', requireAuth, checkCsrf, (req, res) => {
+app.delete('/api/albums/:id/comments/:cid', requireAlbumOwner, checkCsrf, (req, res) => {
   const a = getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const n = db.prepare('DELETE FROM album_comments WHERE id = ? AND album_id = ?').run(String(req.params.cid), a.id).changes;
