@@ -161,6 +161,7 @@ function applyRole() {
   hide('optimizeBtn', !isAdmin);
   hide('indexBtn', !isAdmin);
   hide('facesBtn', !isAdmin);
+  hide('retagBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
   hide('logoutBtn', !isAdmin);
@@ -198,6 +199,14 @@ function route() {
     cur.view = 'people'; cur.personId = null;
     showView();
     renderPeople();
+  } else if (h === '/things') {
+    cur.view = 'things'; cur.thingTag = null;
+    showView();
+    renderThings();
+  } else if (/^\/thing\/.+/.test(h)) {
+    cur.view = 'things'; cur.thingTag = decodeURIComponent(h.slice('/thing/'.length));
+    showView();
+    renderThing();
   } else if (/^\/person\/[0-9a-f-]{36}$/i.test(h)) {
     cur.view = 'people'; cur.personId = h.split('/')[2];
     showView();
@@ -224,6 +233,7 @@ function showView() {
   $('viewAlbum').hidden = cur.view !== 'album';
   $('viewPlaces').hidden = cur.view !== 'places';
   $('viewPeople').hidden = cur.view !== 'people';
+  $('viewThings').hidden = cur.view !== 'things';
   if (railEl && !FLAT.includes(cur.view)) railEl.hidden = true;
 }
 
@@ -471,6 +481,7 @@ function applyFilters(list) {
 
 function gridData() {
   if (cur.view === 'people') return cur.personId ? (cur.items || []) : [];
+  if (cur.view === 'things') return cur.thingTag ? (cur.items || []) : [];
   if (cur.view === 'album') return applySearch(cur.items);
   if (cur.view === 'trash') return applySearch(trashList);
   if (cur.view === 'locked') return applySearch(lockedList);
@@ -1137,6 +1148,55 @@ function openCoverPicker() {
   }
   $('pickerCount').textContent = '';
   $('pickerModal').hidden = false;
+}
+
+// ─── Lucruri (categorii CLIP) ────────────────────────────────────────────
+const THING_ICON = {
+  'Plajă': 'beach_access', 'Munte': 'landscape', 'Mâncare': 'restaurant', 'Apus': 'wb_twilight',
+  'Flori': 'local_florist', 'Mașini': 'directions_car', 'Animale': 'pets', 'Clădiri': 'apartment',
+  'Noapte': 'nightlight', 'Zăpadă': 'ac_unit', 'Apă': 'water', 'Petreceri': 'celebration',
+  'Sport': 'sports_soccer', 'Natură': 'forest', 'Documente': 'description', 'Selfie': 'face',
+};
+async function renderThings() {
+  updateNav();
+  $('thingBack').hidden = true;
+  $('thingsTitle').textContent = 'Lucruri';
+  $('thingGrid').hidden = true;
+  $('thingsGrid').hidden = false;
+  let list = [];
+  try { list = await api('/api/things'); } catch {}
+  const grid = $('thingsGrid');
+  grid.textContent = '';
+  $('thingsEmpty').hidden = list.length > 0;
+  for (const t of list) {
+    const a = document.createElement('a');
+    a.className = 'person-card';
+    a.href = '#/thing/' + encodeURIComponent(t.tag);
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.style.borderRadius = '16px';
+    img.src = '/media/' + t.sampleId + '/thumb';
+    const nm = document.createElement('div');
+    nm.className = 'person-name';
+    nm.innerHTML = '<span class="msi" style="font-size:16px;vertical-align:-3px">' + (THING_ICON[t.tag] || 'label') + '</span> ' + escapeHtml(t.tag);
+    const cnt = document.createElement('div');
+    cnt.className = 'person-count muted';
+    cnt.textContent = t.n + (t.n === 1 ? ' poză' : ' poze');
+    a.appendChild(img); a.appendChild(nm); a.appendChild(cnt);
+    grid.appendChild(a);
+  }
+}
+async function renderThing() {
+  updateNav();
+  $('thingsGrid').hidden = true;
+  $('thingsEmpty').hidden = true;
+  $('thingGrid').hidden = false;
+  $('thingBack').hidden = false;
+  let d;
+  try { d = await api('/api/things/' + encodeURIComponent(cur.thingTag)); } catch { location.hash = '#/things'; return; }
+  cur.items = d.items;
+  $('thingsTitle').textContent = cur.thingTag;
+  buildGallery($('thingGrid'), d.items, { flat: true });
 }
 
 // ─── Persoane (grupare fețe) ─────────────────────────────────────────────
@@ -2116,6 +2176,23 @@ function wire() {
 
   // ─── Găsește persoane (fețe) ───────────────────────────────────────────
   $('personBack').onclick = () => { location.hash = '#/people'; };
+  if ($('thingBack')) $('thingBack').onclick = () => { location.hash = '#/things'; };
+  if ($('retagBtn')) $('retagBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    try {
+      const d = await api('/api/search/retag', { method: 'POST' });
+      toast('Se reclasifică în fundal…');
+      const poll = setInterval(async () => {
+        let j; try { j = await api('/api/search/index/status/' + d.jobId); } catch { return; }
+        if (j.phase === 'done' || j.phase === 'error') {
+          clearInterval(poll);
+          toast(j.phase === 'done' ? ('Gata: ' + j.embedded + ' etichete') : 'Eroare la reclasificare');
+          if (cur.view === 'things' && !cur.thingTag) renderThings();
+        }
+      }, 2000);
+    } catch (e2) { toast(e2.message); }
+  };
   $('personRename').onclick = () => renamePerson();
   if ($('personMenuBtn')) {
     $('personMenuBtn').onclick = (e) => { e.stopPropagation(); $('personMenu').hidden = !$('personMenu').hidden; };

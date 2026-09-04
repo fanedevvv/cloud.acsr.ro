@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=41">
+  <link rel="stylesheet" href="/assets/styles.css?v=42">
 </head>
 <body>
   <div class="app">
@@ -29,6 +29,7 @@
         <a class="side-link" href="#/albums" data-view="albums"><span class="msi">photo_album</span><span class="lbl">Albume</span></a>
         <a class="side-link" href="#/places" data-view="places"><span class="msi">map</span><span class="lbl">Locuri</span></a>
         <a class="side-link" href="#/people" data-view="people"><span class="msi">groups</span><span class="lbl">Persoane</span></a>
+        <a class="side-link" href="#/things" data-view="things"><span class="msi">category</span><span class="lbl">Lucruri</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
@@ -70,6 +71,7 @@
             <button id="optimizeBtn" class="menu-item"><span class="msi">compress</span>Optimizează spațiul</button>
             <button id="indexBtn" class="menu-item"><span class="msi">saved_search</span>Indexează pentru căutare</button>
             <button id="facesBtn" class="menu-item"><span class="msi">groups</span>Găsește persoane</button>
+            <button id="retagBtn" class="menu-item"><span class="msi">category</span>Reclasifică „Lucruri"</button>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
           </div>
         </div>
@@ -127,6 +129,16 @@
         <div class="section-head"><h1>Partajări</h1></div>
         <div id="sharesGrid" class="albums-grid"></div>
         <div id="sharesEmpty" class="empty" hidden><span class="msi big">group</span><p>Niciun album partajat.</p></div>
+      </main>
+
+      <main id="viewThings" class="view" hidden>
+        <div class="section-head">
+          <button id="thingBack" class="icon-btn2" hidden aria-label="Înapoi"><span class="msi">arrow_back</span></button>
+          <h1 id="thingsTitle">Lucruri</h1>
+        </div>
+        <div id="thingsGrid" class="people-grid"></div>
+        <div id="thingGrid" class="j-scroll" hidden></div>
+        <div id="thingsEmpty" class="empty" hidden><span class="msi big">category</span><p>Nicio categorie încă.</p><p class="muted">Rulează „Indexează pentru căutare", apoi „Reclasifică Lucruri".</p></div>
       </main>
 
       <main id="viewPeople" class="view" hidden>
@@ -381,8 +393,8 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=41"></script>
-  <script src="/assets/app.js?v=41"></script>
-  <script src="/assets/pwa.js?v=41"></script>
+  <script src="/assets/editor.js?v=42"></script>
+  <script src="/assets/app.js?v=42"></script>
+  <script src="/assets/pwa.js?v=42"></script>
 </body>
 </html>

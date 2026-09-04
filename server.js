@@ -398,6 +398,27 @@ app.get('/api/search/index/status/:id', requireAuth, (req, res) => {
   res.json(j);
 });
 
+// ─── „Lucruri" (categorii CLIP zero-shot) ────────────────────────────────
+app.get('/api/things', requireAuth, (req, res) => {
+  try { res.json(search.things()); } catch { res.json([]); }
+});
+
+app.get('/api/things/:tag', requireAuth, (req, res) => {
+  let ids = [];
+  try { ids = search.thingItems(req.params.tag); } catch { ids = []; }
+  const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ?`);
+  const rows = ids.map((id) => get.get(id)).filter(Boolean).map(mapRow);
+  res.json({ tag: String(req.params.tag), items: rows });
+});
+
+app.post('/api/search/retag', requireAdmin, checkCsrf, (req, res) => {
+  const cur = search.current();
+  if (cur && !cur.finishedAt && cur.phase !== 'error') return res.status(409).json({ error: 'un job rulează deja' });
+  const j = search.newJob();
+  search.runRetag(j).catch((e) => console.error('retag:', e));
+  res.json({ jobId: j.id });
+});
+
 // ─── Persoane (grupare fețe) ─────────────────────────────────────────────
 const faces = require('./lib/faces');
 
