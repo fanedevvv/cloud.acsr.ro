@@ -329,6 +329,9 @@ function contentWidth(el) {
 function buildGallery(container, list, opts) {
   const flat = opts && opts.flat;
   container._list = list;
+  // virtualizare: uită plăcuțele vechi
+  container.querySelectorAll('.j-tile').forEach((b) => tileObs.unobserve(b));
+  loadedTiles.clear();
   container.textContent = '';
   container.dataset.zoom = String(gridZoom);
   const width = contentWidth(container);
@@ -374,6 +377,37 @@ function dayHead(dateIso, ids, by) {
   return wrap;
 }
 
+// Observator pentru virtualizarea imaginilor din grilă: atașează <img> când
+// plăcuța se apropie de ecran, îl scoate când e departe (limitează memoria).
+const loadedTiles = new Set();
+const tileObs = new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    const b = en.target;
+    if (en.isIntersecting) {
+      if (!b.querySelector('img')) {
+        const img = document.createElement('img');
+        img.decoding = 'async';
+        img.src = '/media/' + b.dataset.id + '/thumb';
+        img.alt = b._name || '';
+        b.insertBefore(img, b.firstChild);
+        loadedTiles.add(b);
+      }
+    }
+  }
+  // cap: dacă avem prea multe imagini încărcate, scoate-le pe cele departe de ecran
+  if (loadedTiles.size > 1400) {
+    const vh = window.innerHeight;
+    for (const b of loadedTiles) {
+      const r = b.getBoundingClientRect();
+      if (r.bottom < -2500 || r.top > vh + 2500) {
+        const im = b.querySelector('img');
+        if (im) im.remove();
+        loadedTiles.delete(b);
+      }
+    }
+  }
+}, { rootMargin: '900px 0px' });
+
 function jtile(cell) {
   const it = cell.it;
   const b = document.createElement('button');
@@ -384,19 +418,15 @@ function jtile(cell) {
   b.style.height = cell.h + 'px';
   if (selected.has(it.id)) b.classList.add('sel');
 
-  const img = document.createElement('img');
-  img.loading = 'lazy';
-  img.decoding = 'async';
-  img.src = '/media/' + it.id + '/thumb';
-  img.alt = it.originalName || '';
-  b.appendChild(img);
-
+  // imaginea se atașează doar când plăcuța se apropie de ecran (virtualizare)
+  b._name = it.originalName || '';
   if (it.type === 'video') {
     const s = document.createElement('span');
     s.className = 'play-badge';
     s.textContent = '▶';
     b.appendChild(s);
   }
+  tileObs.observe(b);
 
   const chk = document.createElement('span');
   chk.className = 'chk';
