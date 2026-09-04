@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=51">
+  <link rel="stylesheet" href="/assets/styles.css?v=52">
 </head>
 <body>
   <div class="app">
@@ -186,6 +186,7 @@
                 <button id="albumCommentsToggle" class="menu-item"><span class="msi">chat_bubble</span>Permite comentarii<span class="mi-check msi">check</span></button>
                 <button id="albumContribToggle" class="menu-item"><span class="msi">add_photo_alternate</span>Permite adăugarea de poze<span class="mi-check msi">check</span></button>
                 <button id="albumModerate" class="menu-item"><span class="msi">forum</span>Vezi comentariile</button>
+                <button id="albumSlideshow" class="menu-item"><span class="msi">movie</span>Slideshow → video</button>
                 <div class="menu2-sep"></div>
                 <button id="albumDelete" class="menu-item"><span class="msi">delete</span>Șterge album</button>
               </div>
@@ -376,6 +377,23 @@
     </div>
   </div>
 
+  <div id="slideModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Slideshow → video</h2>
+      <p class="muted">Fac un clip mp4 din pozele alese, cu tranziții scurte între poze.</p>
+      <label class="opt-check"><span>Secunde per poză</span>
+        <input id="slideSecs" type="number" min="2" max="8" value="3" style="width:60px">
+      </label>
+      <label class="opt-check"><input type="checkbox" id="slideKB" checked> Tranziții fade</label>
+      <div id="slideProg" class="import-prog" hidden><div class="bar"><div id="slideBar" class="fill"></div></div><div id="slideStat" class="muted"></div></div>
+      <div class="modal-actions">
+        <a id="slideDl" class="btn primary" hidden download>Descarcă clipul</a>
+        <span><button id="slideStart" class="btn primary">Creează</button>
+        <button id="slideClose" class="btn">Închide</button></span>
+      </div>
+    </div>
+  </div>
+
   <div id="healthModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Stare & backup</h2>
@@ -383,6 +401,23 @@
       <div class="modal-actions">
         <button id="healthBackup" class="btn primary">Fă backup acum</button>
         <button id="healthClose" class="btn">Închide</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="slideModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Slideshow video</h2>
+      <p class="muted" id="slideDesc">Se face un clip mp4 din pozele selectate.</p>
+      <label class="opt-check"><input type="checkbox" id="slideKB" checked> Efect Ken Burns (zoom lent)</label>
+      <label class="opt-check" style="gap:8px">Durată per poză
+        <select id="slideSecs"><option value="2">2s</option><option value="3" selected>3s</option><option value="4">4s</option><option value="5">5s</option></select>
+      </label>
+      <div id="slideProg" class="import-prog" hidden><div class="bar"><div id="slideBar" class="fill"></div></div><div id="slideStat" class="muted"></div></div>
+      <div class="modal-actions">
+        <a id="slideDl" class="btn primary" hidden download>Descarcă clipul</a>
+        <span><button id="slideStart" class="btn primary">Creează</button>
+        <button id="slideClose" class="btn">Închide</button></span>
       </div>
     </div>
   </div>
@@ -417,9 +452,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=51"></script>
-  <script src="/assets/veditor.js?v=51"></script>
-  <script src="/assets/app.js?v=51"></script>
-  <script src="/assets/pwa.js?v=51"></script>
+  <script src="/assets/editor.js?v=52"></script>
+  <script src="/assets/veditor.js?v=52"></script>
+  <script src="/assets/app.js?v=52"></script>
+  <script src="/assets/pwa.js?v=52"></script>
 </body>
 </html>

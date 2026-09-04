@@ -1052,6 +1052,7 @@ function renderSelActions() {
       if (!ok) return;
       bulk((id) => api('/api/media/' + id + '/lock', { method: 'POST' }), 'Mutat în folderul blocat', (id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }));
     }));
+    box.appendChild(selBtn('movie', 'Slideshow video', () => openSlideshow([...selected])));
   }
   if (cur.view === 'album') {
     box.appendChild(selBtn('remove', 'Scoate din album', async () => {
@@ -1065,12 +1066,25 @@ function renderSelActions() {
       } catch (e) { toast(e.message); }
     }));
   }
+  box.appendChild(selBtn('movie', 'Slideshow → video', () => openSlideModal([...selected])));
   box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => {
     location.href = '/api/download?ids=' + [...selected].join(',');
   }));
   if (isAdmin) {
     box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', (id) => api('/api/media/' + id + '/restore', { method: 'POST' }))));
   }
+}
+
+let slideIds = [];
+let slideTimer2 = null;
+function openSlideModal(ids) {
+  slideIds = (ids || []).slice(0, 80);
+  if (slideIds.length < 2) { toast('Alege cel puțin 2 poze'); return; }
+  $('slideProg').hidden = true;
+  $('slideDl').hidden = true;
+  $('slideStart').disabled = false;
+  $('slideStat').textContent = '';
+  $('slideModal').hidden = false;
 }
 
 async function bulk(fn, okMsg, undoFn) {
@@ -1097,6 +1111,53 @@ async function bulk(fn, okMsg, undoFn) {
   if (cur.view === 'album') await loadAlbum(cur.albumId);
   clearSel();
   rerender();
+}
+
+// ─── Slideshow -> video ────────────────────────────────────────────────────
+let slideIds = [];
+function openSlideshow(ids) {
+  slideIds = (ids || []).filter((id) => {
+    const m = media.find((x) => x.id === id) || (cur.items || []).find((x) => x.id === id);
+    return m && m.type === 'image';
+  });
+  $('slideDesc').textContent = slideIds.length + ' poze';
+  $('slideProg').hidden = true;
+  $('slideDl').hidden = true;
+  $('slideStart').disabled = slideIds.length < 2;
+  $('slideModal').hidden = false;
+}
+function wireSlideshow() {
+  $('slideClose').onclick = () => { $('slideModal').hidden = true; };
+  $('slideStart').onclick = async () => {
+    $('slideStart').disabled = true;
+    $('slideProg').hidden = false;
+    $('slideDl').hidden = true;
+    $('slideBar').style.width = '10%';
+    $('slideStat').textContent = 'Se pregătește…';
+    let jobId;
+    try {
+      const d = await api('/api/slideshow', { method: 'POST', body: {
+        ids: slideIds, kenburns: $('slideKB').checked, seconds: Number($('slideSecs').value),
+      } });
+      jobId = d.jobId;
+    } catch (e) { $('slideStat').textContent = e.message; $('slideStart').disabled = false; return; }
+    const poll = setInterval(async () => {
+      let j;
+      try { j = await api('/api/slideshow/status/' + jobId); } catch { return; }
+      $('slideBar').style.width = (j.phase === 'done' ? 100 : j.phase === 'processing' ? 60 : 20) + '%';
+      $('slideStat').textContent = { starting: 'Se pregătește…', processing: 'Se codează cu ffmpeg…', done: 'Gata!', error: 'Eroare' }[j.phase] || j.phase;
+      if (j.phase === 'done' || j.phase === 'error') {
+        clearInterval(poll);
+        $('slideStart').disabled = false;
+        if (j.phase === 'done') {
+          const a = $('slideDl');
+          a.href = '/api/slideshow/' + jobId + '/download';
+          a.hidden = false;
+          toast('Slideshow gata');
+        } else $('slideStat').textContent = 'Eroare: ' + (j.error || '');
+      }
+    }, 2000);
+  };
 }
 
 // ─── Chooser ───────────────────────────────────────────────────────────────
@@ -2214,6 +2275,42 @@ function wire() {
   $('albumCommentsToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowComments'); };
   $('albumContribToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowContrib'); };
   $('albumModerate').onclick = () => openModeration();
+  if ($('albumSlideshow')) $('albumSlideshow').onclick = () => {
+    $('albumMenu').hidden = true;
+    openSlideModal((cur.items || []).filter((x) => x.type === 'image').map((x) => x.id));
+  };
+
+  $('slideClose').onclick = () => { if (slideTimer2) clearInterval(slideTimer2); $('slideModal').hidden = true; };
+  $('slideStart').onclick = async () => {
+    $('slideStart').disabled = true;
+    $('slideProg').hidden = false;
+    $('slideDl').hidden = true;
+    $('slideBar').style.width = '10%';
+    $('slideStat').textContent = 'Se pornește…';
+    let jobId;
+    try {
+      const d = await api('/api/slideshow', { method: 'POST', body: {
+        ids: slideIds, seconds: Number($('slideSecs').value) || 3, kenburns: $('slideKB').checked,
+      } });
+      jobId = d.jobId;
+    } catch (e) { $('slideStat').textContent = e.message; $('slideStart').disabled = false; return; }
+    if (slideTimer2) clearInterval(slideTimer2);
+    slideTimer2 = setInterval(async () => {
+      let j;
+      try { j = await api('/api/slideshow/status/' + jobId); } catch { return; }
+      $('slideBar').style.width = (j.phase === 'done' ? 100 : j.phase === 'processing' ? 65 : 25) + '%';
+      $('slideStat').textContent = { starting: 'Se pregătește…', processing: 'Se randează cu ffmpeg…', done: 'Gata!', error: 'Eroare' }[j.phase] || j.phase;
+      if (j.phase === 'done' || j.phase === 'error') {
+        clearInterval(slideTimer2); slideTimer2 = null;
+        $('slideStart').disabled = false;
+        if (j.phase === 'done') {
+          $('slideDl').href = '/api/slideshow/' + jobId + '/download';
+          $('slideDl').hidden = false;
+          toast('Slideshow gata');
+        } else $('slideStat').textContent = 'Eroare: ' + (j.error || '');
+      }
+    }, 2000);
+  };
   $('cmClose').onclick = () => { $('cmModal').hidden = true; };
   $('albumDelete').onclick = async () => {
     if (!confirm('Ștergi albumul „' + cur.album.name + '”? Pozele rămân în galerie.')) return;

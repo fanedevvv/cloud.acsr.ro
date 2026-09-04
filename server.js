@@ -921,6 +921,71 @@ app.get('/api/video-edit/status/:id', requireAuth, (req, res) => {
   res.json(j);
 });
 
+// ─── Slideshow -> mp4 ────────────────────────────────────────────────────
+app.post('/api/slideshow', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+    .filter((x) => UUID_RE.test(String(x))).slice(0, 80);
+  const rows = ids.map((id) => db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL').get(id))
+    .filter((r) => r && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
+  if (rows.length < 2) return res.status(400).json({ error: 'alege cel puțin 2 poze' });
+  const files = rows.map((r) => {
+    const pv = path.join(THUMB_DIR, r.id + '.preview.webp');
+    return fs.existsSync(pv) ? pv : path.join(ORIGINAL_DIR, r.stored_name);
+  });
+  const j = vedit.newJob();
+  vedit.runSlideshow(j, files, { seconds: req.body.seconds, kenburns: req.body.kenburns })
+    .catch((e) => console.error('slideshow:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/slideshow/status/:id', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json({ id: j.id, phase: j.phase, error: j.error, ready: j.phase === 'done' });
+});
+
+app.get('/api/slideshow/:id/download', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j || j.phase !== 'done' || !j.file || !fs.existsSync(j.file)) return res.status(404).end();
+  res.download(j.file, 'slideshow.mp4');
+});
+
+// ─── Slideshow -> mp4 ────────────────────────────────────────────────────
+app.post('/api/slideshow', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
+  const ids = Array.isArray(req.body && req.body.ids)
+    ? req.body.ids.filter((x) => UUID_RE.test(String(x))).slice(0, 80) : [];
+  const rows = ids
+    .map((id) => db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL').get(id))
+    .filter((r) => r && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
+  if (rows.length < 2) return res.status(400).json({ error: 'alege cel puțin 2 poze' });
+  const files = rows.map((r) => {
+    const pv = path.join(THUMB_DIR, r.id + '.preview.webp');
+    return fs.existsSync(pv) ? pv : path.join(ORIGINAL_DIR, r.stored_name);
+  });
+  const j = vedit.newJob();
+  vedit.runSlideshow(j, files, {
+    seconds: req.body && req.body.seconds,
+    kenburns: !(req.body && req.body.kenburns === false),
+  }).catch((e) => console.error('slideshow:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/slideshow/status/:id', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json({ phase: j.phase, error: j.error || null, ready: j.phase === 'done' });
+});
+
+app.get('/api/slideshow/:id/download', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j || j.phase !== 'done' || !j.file || !fs.existsSync(j.file)) return res.status(404).end();
+  res.set('Content-Disposition', 'attachment; filename="slideshow.mp4"');
+  res.type('video/mp4');
+  fs.createReadStream(j.file).pipe(res);
+});
+
 // ─── Ștergere ───────────────────────────────────────────────────────────────
 app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);
