@@ -16,8 +16,9 @@ const ZOOM = [
   { rowH: 210, group: 'day' },
   { rowH: 124, group: 'month' },
   { rowH: 70, group: 'month', bare: true },
+  { rowH: 46, group: 'year', bare: true },
 ];
-const ZOOM_LABEL = ['Mare', 'Confortabil', 'Compact', 'Mic'];
+const ZOOM_LABEL = ['Mare', 'Confortabil', 'Compact', 'Mic', 'An'];
 
 let csrf = '';
 let media = [];
@@ -53,7 +54,7 @@ let slideTimer = null;
 (async function init() {
   try {
     const z = localStorage.getItem('gridZoom');
-    if (z != null) gridZoom = Math.max(0, Math.min(3, parseInt(z, 10) || 0));
+    if (z != null) gridZoom = Math.max(0, Math.min(4, parseInt(z, 10) || 0));
     else { const d = localStorage.getItem('density'); gridZoom = d === 'l' ? 0 : d === 's' ? 2 : 1; }
   } catch {}
   try {
@@ -266,7 +267,7 @@ function dayLabel(iso) {
 
 function groupBy(list, by) {
   const groups = new Map();
-  const n = by === 'month' ? 7 : 10;
+  const n = by === 'year' ? 4 : by === 'month' ? 7 : 10;
   for (const it of list) {
     const k = (it.takenAt || it.createdAt).slice(0, n);
     if (!groups.has(k)) groups.set(k, []);
@@ -367,7 +368,7 @@ function dayHead(dateIso, ids, by) {
   });
   const lbl = document.createElement('span');
   lbl.className = 'daylabel';
-  lbl.textContent = by === 'month' ? monthLabel(dateIso) : dayLabel(dateIso);
+  lbl.textContent = by === 'year' ? new Date(dateIso).getFullYear() : by === 'month' ? monthLabel(dateIso) : dayLabel(dateIso);
   wrap.appendChild(chk);
   wrap.appendChild(lbl);
   return wrap;
@@ -509,11 +510,26 @@ function renderGrid() {
   renderChips();
   renderMemories();
   buildGallery($('grid'), list, { flat: searching });
+  populateJump(searching ? [] : list);
   const waiting = !!(query && query.length >= 2 && searchPending);
   $('gridEmpty').hidden = list.length > 0;
   $('gridEmptyText').textContent = (waiting && !list.length) ? 'Se caută…'
     : searching ? 'Niciun rezultat.' : (EMPTY[cur.view] || 'Gol.');
   buildTimeRail(searching ? 0 : list.length);
+}
+
+function populateJump(list) {
+  const sel = $('jumpSel');
+  if (!sel) return;
+  const months = [...new Set(list.map((m) => (m.takenAt || m.createdAt).slice(0, 7)))].sort().reverse();
+  const show = months.length > 3;
+  sel.hidden = !show;
+  if (!show) return;
+  const want = '<option value="">Sari la…</option>' + months.map((k) => {
+    const d = new Date(k + '-01');
+    return '<option value="' + k + '">' + cap(d.toLocaleDateString('ro-RO', { month: 'long', year: 'numeric' })) + '</option>';
+  }).join('');
+  if (sel.dataset.built !== want) { sel.innerHTML = want; sel.dataset.built = want; }
 }
 
 // ─── Rail de dată (fast-scroll, stil Google Photos) ────────────────────────
@@ -784,6 +800,29 @@ function albumCard(a) {
   meta.appendChild(sub);
   card.appendChild(cover);
   card.appendChild(meta);
+
+  // trage fișiere de pe disc direct pe album
+  card.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault(); e.stopPropagation(); card.classList.add('drop-on');
+  });
+  card.addEventListener('dragleave', () => card.classList.remove('drop-on'));
+  card.addEventListener('drop', async (e) => {
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault(); e.stopPropagation();
+    card.classList.remove('drop-on');
+    const files = [...e.dataTransfer.files];
+    const before = new Set(media.map((m) => m.id));
+    await uploadFiles(files);
+    const fresh = media.filter((m) => !before.has(m.id)).map((m) => m.id);
+    if (fresh.length) {
+      try {
+        const d = await api('/api/albums/' + a.id + '/items', { method: 'POST', body: { ids: fresh } });
+        await loadAlbums(); renderAlbums();
+        toast(d.added + ' adăugate în „' + a.name + '"');
+      } catch (err) { toast(err.message); }
+    }
+  });
   return card;
 }
 
@@ -816,7 +855,7 @@ function setZoom(z) {
   if (btn) {
     btn.title = 'Zoom grilă: ' + ZOOM_LABEL[gridZoom];
     const ic = btn.querySelector('.msi');
-    if (ic) ic.textContent = gridZoom >= 2 ? 'grid_on' : gridZoom === 0 ? 'view_comfy' : 'grid_view';
+    if (ic) ic.textContent = gridZoom >= 3 ? 'calendar_view_month' : gridZoom === 2 ? 'grid_on' : gridZoom === 0 ? 'view_comfy' : 'grid_view';
   }
   rerender();
 }
@@ -1964,7 +2003,7 @@ function wire() {
     location.replace('/login');
   };
 
-  $('densityBtn').onclick = () => setZoom((gridZoom + 1) % 4);
+  $('densityBtn').onclick = () => setZoom((gridZoom + 1) % ZOOM.length);
   setZoom(gridZoom); // aplică titlul + iconița
 
   // Ctrl/Cmd + rotița mouse-ului = zoom pe grilă
@@ -2205,6 +2244,13 @@ function wire() {
     b.onclick = () => { filterCat = filterCat === b.dataset.cat ? '' : b.dataset.cat; renderGrid(); };
   });
   $('chipYear').onchange = (e) => { filterYear = e.target.value; renderGrid(); };
+  if ($('jumpSel')) $('jumpSel').onchange = (e) => {
+    const v = e.target.value; e.target.value = '';
+    if (!v) return;
+    const days = [...$('grid').querySelectorAll('.j-day')];
+    const t = days.find((el) => (el.dataset.date || '').startsWith(v)) || days.reverse().find((el) => (el.dataset.date || '') < v + '-99');
+    if (t) SCROLLER.scrollTo({ top: t.getBoundingClientRect().top + SCROLLER.scrollTop - 70, behavior: 'smooth' });
+  };
 
   // cod QR în fereastra de partajare
   $('shareQrBtn').onclick = () => {

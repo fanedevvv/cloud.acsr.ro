@@ -856,3 +856,6 @@ body.selecting .chk { opacity: 1; }
 #lbInfoBody .info-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2);
   border-radius: 999px; padding: 3px 10px 3px 3px; text-decoration: none; color: var(--text); font-size: 12px; }
 #lbInfoBody .info-chip img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+
+/* drag fișiere pe album  v47 */
+.album-card.drop-on { outline: 2px dashed var(--accent); outline-offset: 3px; border-radius: 12px; }
