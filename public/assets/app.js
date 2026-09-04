@@ -160,6 +160,7 @@ function applyRole() {
   if (tl) tl.hidden = !isAdmin;
   hide('optimizeBtn', !isAdmin);
   hide('indexBtn', !isAdmin);
+  hide('facesBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
   hide('logoutBtn', !isAdmin);
@@ -193,6 +194,14 @@ function route() {
     cur.view = 'places';
     showView();
     renderPlaces();
+  } else if (h === '/people') {
+    cur.view = 'people'; cur.personId = null;
+    showView();
+    renderPeople();
+  } else if (/^\/person\/[0-9a-f-]{36}$/i.test(h)) {
+    cur.view = 'people'; cur.personId = h.split('/')[2];
+    showView();
+    renderPerson();
   } else if (h === '/highlights') {
     cur.view = 'highlights'; showView(); renderGrid();
   } else if (h === '/archive') {
@@ -214,6 +223,7 @@ function showView() {
   $('viewShares').hidden = cur.view !== 'shares';
   $('viewAlbum').hidden = cur.view !== 'album';
   $('viewPlaces').hidden = cur.view !== 'places';
+  $('viewPeople').hidden = cur.view !== 'people';
   if (railEl && !FLAT.includes(cur.view)) railEl.hidden = true;
 }
 
@@ -460,6 +470,7 @@ function applyFilters(list) {
 }
 
 function gridData() {
+  if (cur.view === 'people') return cur.personId ? (cur.items || []) : [];
   if (cur.view === 'album') return applySearch(cur.items);
   if (cur.view === 'trash') return applySearch(trashList);
   if (cur.view === 'locked') return applySearch(lockedList);
@@ -1116,6 +1127,66 @@ function openCoverPicker() {
   }
   $('pickerCount').textContent = '';
   $('pickerModal').hidden = false;
+}
+
+// ─── Persoane (grupare fețe) ─────────────────────────────────────────────
+async function renderPeople() {
+  updateNav();
+  $('personBack').hidden = true;
+  $('personRename').hidden = true;
+  $('personGrid').hidden = true;
+  $('peopleGrid').hidden = false;
+  $('peopleTitle').textContent = 'Persoane';
+  let list = [];
+  try { list = await api('/api/people'); } catch { list = []; }
+  const grid = $('peopleGrid');
+  grid.textContent = '';
+  $('peopleEmpty').hidden = list.length > 0;
+  for (const p of list) {
+    const a = document.createElement('a');
+    a.className = 'person-card';
+    a.href = '#/person/' + p.id;
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = p.coverFaceId ? '/api/faces/' + p.coverFaceId + '/crop' : '/media/' + p.coverMediaId + '/thumb';
+    const nm = document.createElement('div');
+    nm.className = 'person-name';
+    nm.textContent = p.name || 'Fără nume';
+    if (!p.name) nm.classList.add('unnamed');
+    const cnt = document.createElement('div');
+    cnt.className = 'person-count muted';
+    cnt.textContent = p.n + (p.n === 1 ? ' poză' : ' poze');
+    a.appendChild(img); a.appendChild(nm); a.appendChild(cnt);
+    grid.appendChild(a);
+  }
+}
+
+let curPerson = null;
+async function renderPerson() {
+  updateNav();
+  $('peopleGrid').hidden = true;
+  $('peopleEmpty').hidden = true;
+  $('personGrid').hidden = false;
+  $('personBack').hidden = false;
+  $('personRename').hidden = false;
+  let d;
+  try { d = await api('/api/people/' + cur.personId); } catch { location.hash = '#/people'; return; }
+  curPerson = d.person;
+  cur.items = d.items;
+  $('peopleTitle').textContent = d.person.name || 'Fără nume';
+  buildGallery($('personGrid'), d.items, { flat: true });
+}
+
+async function renamePerson() {
+  if (!curPerson) return;
+  const name = prompt('Numele persoanei', curPerson.name || '');
+  if (name === null) return;
+  try {
+    const r = await api('/api/people/' + curPerson.id, { method: 'PATCH', body: { name: name.trim() } });
+    curPerson.name = r.name;
+    $('peopleTitle').textContent = r.name || 'Fără nume';
+    toast('Salvat');
+  } catch (e) { toast(e.message); }
 }
 
 // ─── Folder blocat (PIN) ──────────────────────────────────────────────────
@@ -1902,6 +1973,55 @@ function wire() {
     } catch {}
   };
   $('idxClose').onclick = () => { stopIdx(); $('idxModal').hidden = true; };
+
+  // ─── Găsește persoane (fețe) ───────────────────────────────────────────
+  $('personBack').onclick = () => { location.hash = '#/people'; };
+  $('personRename').onclick = () => renamePerson();
+  let faceTimer = null;
+  const stopFace = () => { if (faceTimer) { clearInterval(faceTimer); faceTimer = null; } };
+  $('facesBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    $('faceProgress').hidden = true;
+    $('faceStart').disabled = false;
+    $('faceHave').textContent = '';
+    $('faceModal').hidden = false;
+    try {
+      const st = await api('/api/faces/stats');
+      $('faceHave').textContent = st.done + '/' + st.total + ' poze · ' + st.faces + ' fețe · ' + st.people + ' persoane';
+    } catch {}
+  };
+  $('faceClose').onclick = () => { stopFace(); $('faceModal').hidden = true; };
+  $('faceStart').onclick = async () => {
+    $('faceStart').disabled = true;
+    $('faceProgress').hidden = false;
+    $('faceBar').style.width = '3%';
+    $('faceStat').textContent = 'Se pornește… (prima dată încarcă modelele)';
+    let jobId;
+    try {
+      const d = await api('/api/faces/index', { method: 'POST', body: {} });
+      jobId = d.jobId;
+    } catch (e) { $('faceStat').textContent = e.message; $('faceStart').disabled = false; return; }
+    stopFace();
+    faceTimer = setInterval(async () => {
+      let j;
+      try { j = await api('/api/faces/index/status/' + jobId); } catch { return; }
+      const PH = { starting: 'Se pregătește…', scanning: 'Se scanează…', running: 'Se caută fețe', done: 'Gata', error: 'Eroare' };
+      const pct = j.total ? (j.done / j.total) * 100 : (j.phase === 'done' ? 100 : 6);
+      $('faceBar').style.width = Math.max(3, pct).toFixed(1) + '%';
+      const bits = [PH[j.phase] || j.phase];
+      if (j.total) bits.push(j.done + '/' + j.total);
+      if (j.faces) bits.push(j.faces + ' fețe');
+      if (j.people) bits.push(j.people + ' persoane');
+      $('faceStat').textContent = bits.join('  ·  ');
+      if (j.phase === 'done' || j.phase === 'error') {
+        stopFace();
+        $('faceStart').disabled = false;
+        toast(j.phase === 'done' ? ('Gata: ' + j.people + ' persoane') : ('Eroare: ' + (j.error || '')));
+        if (cur.view === 'people' && !cur.personId) renderPeople();
+      }
+    }, 2000);
+  };
   $('idxStart').onclick = async () => {
     $('idxStart').disabled = true;
     $('idxProgress').hidden = false;

@@ -750,3 +750,24 @@ body.selecting .chk { opacity: 1; }
 .cm-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .cm-row > div:first-child { flex: 1; min-width: 0; }
 .cm-body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+
+/* ── PERSOANE (fețe)  v38 ─────────────────────────────────────────────── */
+.people-grid {
+  max-width: 1720px; margin: 8px auto 0; padding: 12px 24px 48px;
+  display: grid; gap: 20px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.person-card { text-decoration: none; color: var(--text); text-align: center; }
+.person-card img {
+  width: 108px; height: 108px; border-radius: 50%; object-fit: cover;
+  background: var(--surface-2); display: block; margin: 0 auto 8px;
+  transition: transform .12s;
+}
+.person-card:hover img { transform: scale(1.04); }
+.person-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.person-name.unnamed { color: var(--text-dim); font-weight: 400; }
+.person-count { font-size: 12px; }
+@media (max-width: 520px) {
+  .people-grid { padding: 12px 12px 40px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .person-card img { width: 88px; height: 88px; }
+}

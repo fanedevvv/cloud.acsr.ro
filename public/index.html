@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=37">
+  <link rel="stylesheet" href="/assets/styles.css?v=38">
 </head>
 <body>
   <div class="app">
@@ -28,6 +28,7 @@
         <a class="side-link" href="#/highlights" data-view="highlights"><span class="msi">star</span><span class="lbl">Favorite</span></a>
         <a class="side-link" href="#/albums" data-view="albums"><span class="msi">photo_album</span><span class="lbl">Albume</span></a>
         <a class="side-link" href="#/places" data-view="places"><span class="msi">map</span><span class="lbl">Locuri</span></a>
+        <a class="side-link" href="#/people" data-view="people"><span class="msi">groups</span><span class="lbl">Persoane</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
@@ -67,6 +68,7 @@
             <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Import Google Takeout</button>
             <button id="optimizeBtn" class="menu-item"><span class="msi">compress</span>Optimizează spațiul</button>
             <button id="indexBtn" class="menu-item"><span class="msi">saved_search</span>Indexează pentru căutare</button>
+            <button id="facesBtn" class="menu-item"><span class="msi">groups</span>Găsește persoane</button>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
           </div>
         </div>
@@ -123,6 +125,18 @@
         <div class="section-head"><h1>Partajări</h1></div>
         <div id="sharesGrid" class="albums-grid"></div>
         <div id="sharesEmpty" class="empty" hidden><span class="msi big">group</span><p>Niciun album partajat.</p></div>
+      </main>
+
+      <main id="viewPeople" class="view" hidden>
+        <div class="section-head">
+          <button id="personBack" class="icon-btn2" hidden aria-label="Înapoi"><span class="msi">arrow_back</span></button>
+          <h1 id="peopleTitle">Persoane</h1>
+          <div class="spacer"></div>
+          <button id="personRename" class="btn ghost" hidden><span class="msi">edit</span>Nume</button>
+        </div>
+        <div id="peopleGrid" class="people-grid"></div>
+        <div id="personGrid" class="j-scroll" hidden></div>
+        <div id="peopleEmpty" class="empty" hidden><span class="msi big">groups</span><p>Nicio persoană încă.</p><p class="muted">Rulează „Găsește persoane" din meniul contului.</p></div>
       </main>
 
       <main id="viewPlaces" class="view view-places" hidden>
@@ -302,6 +316,22 @@
     </div>
   </div>
 
+  <div id="faceModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Găsește persoane</h2>
+      <p class="muted">Detectează fețele local (face-api pe CPU) și grupează pozele cu aceeași persoană. Prima rulare descarcă modele mici. Poate dura — ~2 sec/poză.</p>
+      <div id="faceProgress" class="import-prog" hidden>
+        <div class="bar"><div id="faceBar" class="fill"></div></div>
+        <div id="faceStat" class="muted"></div>
+      </div>
+      <div class="modal-actions">
+        <span id="faceHave" class="muted"></span>
+        <span><button id="faceStart" class="btn primary">Pornește</button>
+        <button id="faceClose" class="btn">Închide</button></span>
+      </div>
+    </div>
+  </div>
+
   <div id="idxModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Căutare inteligentă</h2>
@@ -331,8 +361,8 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=37"></script>
-  <script src="/assets/app.js?v=37"></script>
-  <script src="/assets/pwa.js?v=37"></script>
+  <script src="/assets/editor.js?v=38"></script>
+  <script src="/assets/app.js?v=38"></script>
+  <script src="/assets/pwa.js?v=38"></script>
 </body>
 </html>

@@ -398,6 +398,104 @@ app.get('/api/search/index/status/:id', requireAuth, (req, res) => {
   res.json(j);
 });
 
+// ─── Persoane (grupare fețe) ─────────────────────────────────────────────
+const faces = require('./lib/faces');
+
+app.get('/api/people', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT c.id, c.name, c.n,
+           (SELECT f.media_id FROM faces f WHERE f.id = c.cover_face_id) AS coverMediaId,
+           c.cover_face_id AS coverFaceId
+    FROM face_clusters c
+    WHERE c.n >= 2
+    ORDER BY (c.name IS NULL), c.n DESC
+  `).all();
+  res.json(rows);
+});
+
+app.get('/api/people/:cid', requireAuth, (req, res) => {
+  const cid = String(req.params.cid);
+  if (!UUID_RE.test(cid)) return res.status(404).json({ error: 'nu există' });
+  const cl = db.prepare('SELECT id, name, n FROM face_clusters WHERE id = ?').get(cid);
+  if (!cl) return res.status(404).json({ error: 'nu există' });
+  const rows = db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE id IN (SELECT DISTINCT media_id FROM faces WHERE cluster_id = ?)
+      AND deleted_at IS NULL AND locked = 0
+    ORDER BY COALESCE(taken_at, created_at) DESC
+  `).all(cid).map(mapRow);
+  res.json({ person: cl, items: rows });
+});
+
+app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const cid = String(req.params.cid);
+  const cl = db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
+  if (!cl) return res.status(404).json({ error: 'nu există' });
+  const name = String((req.body && req.body.name) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  db.prepare('UPDATE face_clusters SET name = ? WHERE id = ?').run(name || null, cid);
+  res.json({ ok: true, name: name || null });
+});
+
+app.delete('/api/people/:cid', requireAuth, checkCsrf, (req, res) => {
+  // „nu e o persoană" — ascunde clusterul (îl golim de fețe, rămâne inert)
+  const cid = String(req.params.cid);
+  db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ?').run(cid);
+  db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
+  res.json({ ok: true });
+});
+
+app.get('/api/faces/:fid/crop', requireAuth, async (req, res) => {
+  const fid = String(req.params.fid);
+  if (!UUID_RE.test(fid)) return res.status(404).end();
+  const f = db.prepare('SELECT box, media_id FROM faces WHERE id = ?').get(fid);
+  if (!f) return res.status(404).end();
+  const m = db.prepare('SELECT stored_name, locked FROM media WHERE id = ?').get(f.media_id);
+  if (!m || (m.locked && !(req.session && req.session.lockOpen))) return res.status(404).end();
+  const src = path.join(ORIGINAL_DIR, m.stored_name);
+  if (!fs.existsSync(src)) return res.status(404).end();
+  try {
+    const meta = await require('sharp')(src).metadata();
+    const [fx, fy, fw, fh] = JSON.parse(f.box);
+    const W = meta.width, H = meta.height;
+    // margine 25% în jurul feței
+    let left = Math.round((fx - fw * 0.25) * W);
+    let top = Math.round((fy - fh * 0.25) * H);
+    let width = Math.round(fw * 1.5 * W);
+    let height = Math.round(fh * 1.5 * H);
+    left = Math.max(0, Math.min(left, W - 2));
+    top = Math.max(0, Math.min(top, H - 2));
+    width = Math.max(2, Math.min(width, W - left));
+    height = Math.max(2, Math.min(height, H - top));
+    const buf = await require('sharp')(src).extract({ left, top, width, height })
+      .resize(200, 200, { fit: 'cover' }).webp({ quality: 80 }).toBuffer();
+    res.set('Content-Type', 'image/webp');
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.send(buf);
+  } catch { res.status(404).end(); }
+});
+
+app.get('/api/faces/stats', requireAuth, (req, res) => {
+  const total = db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL").get().n;
+  const done = db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL AND faces_done = 1").get().n;
+  const nfaces = db.prepare('SELECT COUNT(*) n FROM faces').get().n;
+  const people = db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get().n;
+  res.json({ total, done, faces: nfaces, people });
+});
+
+app.post('/api/faces/index', requireAdmin, checkCsrf, (req, res) => {
+  const cur = faces.current();
+  if (cur && !cur.finishedAt && cur.phase !== 'error') return res.status(409).json({ error: 'indexarea rulează deja' });
+  const j = faces.newJob();
+  faces.runIndex(j).catch((e) => console.error('faces:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/faces/index/status/:id', requireAuth, (req, res) => {
+  const j = faces.getJob(String(req.params.id));
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(j);
+});
+
 app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;
