@@ -995,4 +995,5 @@ app.listen(PORT, '127.0.0.1', () => {
   Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
   Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
   Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
+  setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
 });

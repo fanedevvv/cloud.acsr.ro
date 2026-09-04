@@ -420,16 +420,20 @@ function isSearching() {
     (cur.view === 'all' || cur.view === 'highlights' || cur.view === 'archive'));
 }
 
+let searchPending = false;
 function scheduleServerSearch(q) {
   clearTimeout(searchT);
   const seq = ++searchSeq;
   searchT = setTimeout(async () => {
+    searchPending = true;
+    if (FLAT.includes(cur.view)) renderGrid();
     try {
       const rows = await api('/api/search?q=' + encodeURIComponent(q));
       if (seq !== searchSeq) return;
       searchResults = rows;
-      if (FLAT.includes(cur.view)) renderGrid();
     } catch { /* rămâne filtrarea locală */ }
+    finally { if (seq === searchSeq) searchPending = false; }
+    if (FLAT.includes(cur.view)) renderGrid();
   }, 320);
 }
 
@@ -481,8 +485,10 @@ function renderGrid() {
   renderChips();
   renderMemories();
   buildGallery($('grid'), list, { flat: searching });
+  const waiting = !!(query && query.length >= 2 && searchPending);
   $('gridEmpty').hidden = list.length > 0;
-  $('gridEmptyText').textContent = searching ? 'Niciun rezultat.' : (EMPTY[cur.view] || 'Gol.');
+  $('gridEmptyText').textContent = (waiting && !list.length) ? 'Se caută…'
+    : searching ? 'Niciun rezultat.' : (EMPTY[cur.view] || 'Gol.');
   buildTimeRail(searching ? 0 : list.length);
 }
 
