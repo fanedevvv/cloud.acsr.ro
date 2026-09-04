@@ -780,3 +780,21 @@ body.selecting .chk { opacity: 1; }
 }
 .toast-undo:hover { background: rgba(255,255,255,.12); }
 :root[data-theme="dark"] .toast-undo:hover { background: rgba(0,0,0,.08); }
+
+/* ── Locuri: liste + captions  v40 ───────────────────────────────────── */
+.map-pop-cap { font-size: 12px; font-weight: 600; text-align: center; padding: 6px 4px 2px; }
+.places-list {
+  max-width: 1720px; margin: 12px auto 0; padding: 0 24px 48px;
+  display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.place-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.place-row:hover { background: var(--hover); }
+.place-row img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex: none; background: var(--surface-2); }
+.place-row-t { display: flex; flex-direction: column; min-width: 0; }
+.place-row-t b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.place-row-t span { font-size: 12px; }
+@media (max-width: 520px) { .places-list { padding: 0 12px 40px; } }

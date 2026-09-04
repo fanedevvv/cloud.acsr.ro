@@ -1539,12 +1539,20 @@ async function renderPlaces() {
   const bounds = [];
   for (const p of pts) {
     const m = L.marker([p.lat, p.lon]);
+    const wrap = document.createElement('div');
     const img = document.createElement('img');
     img.src = '/media/' + p.id + '/thumb';
     img.className = 'map-pop';
     img.loading = 'lazy';
     img.onclick = () => openLightbox(pts, p.id);
-    m.bindPopup(img, { minWidth: 160, closeButton: false });
+    wrap.appendChild(img);
+    if (p.place) {
+      const c = document.createElement('div');
+      c.className = 'map-pop-cap';
+      c.textContent = p.place;
+      wrap.appendChild(c);
+    }
+    m.bindPopup(wrap, { minWidth: 160, closeButton: false });
     placesLayer.addLayer(m);
     bounds.push([p.lat, p.lon]);
   }
@@ -1553,6 +1561,33 @@ async function renderPlaces() {
     placesMap.invalidateSize();
     if (bounds.length) placesMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
   });
+
+  // listă de locuri (grupate pe oraș/țară)
+  let sum = [];
+  try { sum = await api('/api/places/summary'); } catch {}
+  const wrap = $('placesList');
+  if (wrap) {
+    wrap.textContent = '';
+    for (const s of sum) {
+      if (!s.place) continue;
+      const b = document.createElement('button');
+      b.className = 'place-row';
+      b.type = 'button';
+      const im = document.createElement('img');
+      im.loading = 'lazy';
+      im.src = '/media/' + s.sampleId + '/thumb';
+      const t = document.createElement('div');
+      t.className = 'place-row-t';
+      t.innerHTML = '<b>' + escapeHtml(s.place) + '</b><span class="muted">' + s.n + (s.n === 1 ? ' poză' : ' poze') + '</span>';
+      b.appendChild(im); b.appendChild(t);
+      b.onclick = () => {
+        const here = pts.filter((x) => (x.place || x.city || x.country) === s.place);
+        if (here.length && placesMap) placesMap.flyToBounds(here.map((x) => [x.lat, x.lon]), { padding: [50, 50], maxZoom: 14 });
+      };
+      wrap.appendChild(b);
+    }
+    wrap.hidden = !sum.length;
+  }
 }
 
 function toggleInfo() {

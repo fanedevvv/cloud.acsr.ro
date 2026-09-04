@@ -519,14 +519,19 @@ app.get('/api/media', requireAuth, (req, res) => {
 });
 
 // „Locuri" — toate mediile geotag-uite, pentru vizualizarea pe hartă
+const geo = require('./lib/geo');
 app.get('/api/places', requireAuth, (req, res) => {
   const rows = db.prepare(`
-    SELECT id, type, lat, lon, place, taken_at AS takenAt, created_at AS createdAt
+    SELECT id, type, lat, lon, place, city, country, taken_at AS takenAt, created_at AS createdAt
     FROM media
     WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND lat IS NOT NULL AND lon IS NOT NULL
     ORDER BY COALESCE(taken_at, created_at) DESC
   `).all();
   res.json(rows);
+});
+
+app.get('/api/places/summary', requireAuth, (req, res) => {
+  try { res.json(geo.placesSummary()); } catch { res.json([]); }
 });
 
 // „Categorii" — câte elemente în fiecare secțiune automată
@@ -1093,5 +1098,7 @@ app.listen(PORT, '127.0.0.1', () => {
   Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
   Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
   Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
+  setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
+  setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
   setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
 });
