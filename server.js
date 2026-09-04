@@ -416,7 +416,7 @@ app.get('/api/people', requireAuth, (req, res) => {
 app.get('/api/people/:cid', requireAuth, (req, res) => {
   const cid = String(req.params.cid);
   if (!UUID_RE.test(cid)) return res.status(404).json({ error: 'nu există' });
-  const cl = db.prepare('SELECT id, name, n FROM face_clusters WHERE id = ?').get(cid);
+  const cl = db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
   const rows = db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
@@ -424,6 +424,8 @@ app.get('/api/people/:cid', requireAuth, (req, res) => {
       AND deleted_at IS NULL AND locked = 0
     ORDER BY COALESCE(taken_at, created_at) DESC
   `).all(cid).map(mapRow);
+  const faceOf = db.prepare('SELECT id FROM faces WHERE cluster_id = ? AND media_id = ? LIMIT 1');
+  for (const r of rows) { const f = faceOf.get(cid, r.id); r.faceId = f ? f.id : null; }
   res.json({ person: cl, items: rows });
 });
 
@@ -431,9 +433,54 @@ app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, (req, res) => {
   const cid = String(req.params.cid);
   const cl = db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
-  const name = String((req.body && req.body.name) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-  db.prepare('UPDATE face_clusters SET name = ? WHERE id = ?').run(name || null, cid);
-  res.json({ ok: true, name: name || null });
+  const b = req.body || {};
+  if ('name' in b) {
+    const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    db.prepare('UPDATE face_clusters SET name = ? WHERE id = ?').run(name || null, cid);
+  }
+  if ('coverFaceId' in b) {
+    const fid = String(b.coverFaceId || '');
+    const ok = UUID_RE.test(fid) && db.prepare('SELECT 1 FROM faces WHERE id = ? AND cluster_id = ?').get(fid, cid);
+    if (!ok) return res.status(400).json({ error: 'fața nu e a persoanei' });
+    db.prepare('UPDATE face_clusters SET cover_face_id = ? WHERE id = ?').run(fid, cid);
+  }
+  const out = db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
+  res.json({ ok: true, person: out, name: out.name });
+});
+
+// Unește persoana `cid` în persoana `into`
+app.post('/api/people/:cid/merge', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const from = String(req.params.cid);
+  const into = String((req.body && req.body.into) || '');
+  if (from === into) return res.status(400).json({ error: 'aceeași persoană' });
+  const a = db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(into);
+  const b = db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(from);
+  if (!a || !b) return res.status(404).json({ error: 'nu există' });
+  db.transaction(() => {
+    db.prepare('UPDATE faces SET cluster_id = ? WHERE cluster_id = ?').run(into, from);
+    const n = db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(into).c;
+    const name = a.name || b.name || null;
+    const cover = a.cover_face_id || b.cover_face_id || null;
+    db.prepare('UPDATE face_clusters SET n = ?, name = ?, cover_face_id = ? WHERE id = ?').run(n, name, cover, into);
+    db.prepare('DELETE FROM face_clusters WHERE id = ?').run(from);
+  })();
+  res.json({ ok: true, into });
+});
+
+// Scoate toate fețele unei poze din persoana `cid` („nu e ea în poza asta")
+app.post('/api/people/:cid/remove', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  const cid = String(req.params.cid);
+  const mediaId = String((req.body && req.body.mediaId) || '');
+  if (!UUID_RE.test(mediaId)) return res.status(400).json({ error: 'poză invalidă' });
+  const cl = db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
+  if (!cl) return res.status(404).json({ error: 'nu există' });
+  db.transaction(() => {
+    db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ? AND media_id = ?').run(cid, mediaId);
+    const n = db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(cid).c;
+    if (n <= 0) db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
+    else db.prepare('UPDATE face_clusters SET n = ? WHERE id = ?').run(n, cid);
+  })();
+  res.json({ ok: true });
 });
 
 app.delete('/api/people/:cid', requireAuth, checkCsrf, (req, res) => {

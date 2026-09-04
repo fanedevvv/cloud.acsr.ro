@@ -798,3 +798,19 @@ body.selecting .chk { opacity: 1; }
 .place-row-t b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .place-row-t span { font-size: 12px; }
 @media (max-width: 520px) { .places-list { padding: 0 12px 40px; } }
+
+/* ── Persoane: editare  v41 ──────────────────────────────────────────── */
+#personGrid .j-tile .face-rm, #personGrid .j-tile .face-cover {
+  position: absolute; top: 6px; width: 26px; height: 26px; border-radius: 50%;
+  border: 0; cursor: pointer; display: none; place-items: center;
+  background: rgba(0,0,0,.55); color: #fff;
+}
+#personGrid .j-tile .face-rm { right: 6px; }
+#personGrid .j-tile .face-cover { right: 38px; }
+#personGrid .j-tile:hover .face-rm, #personGrid .j-tile:hover .face-cover { display: grid; }
+#personGrid .j-tile .face-rm .msi, #personGrid .j-tile .face-cover .msi { font-size: 16px; }
+.pp-list { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.pp-row { display: flex; align-items: center; gap: 10px; padding: 8px; border: 0; background: transparent;
+  color: var(--text); font: inherit; cursor: pointer; border-radius: 8px; text-align: left; }
+.pp-row:hover { background: var(--hover); }
+.pp-row img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }

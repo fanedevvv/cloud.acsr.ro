@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=40">
+  <link rel="stylesheet" href="/assets/styles.css?v=41">
 </head>
 <body>
   <div class="app">
@@ -135,6 +135,14 @@
           <h1 id="peopleTitle">Persoane</h1>
           <div class="spacer"></div>
           <button id="personRename" class="btn ghost" hidden><span class="msi">edit</span>Nume</button>
+          <div class="acct" id="personMenuWrap" hidden>
+            <button id="personMenuBtn" class="icon-btn2" aria-label="Mai multe"><span class="msi">more_vert</span></button>
+            <div id="personMenu" class="menu2" hidden>
+              <button id="personCover" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
+              <button id="personMerge" class="menu-item"><span class="msi">merge</span>Unește cu altă persoană…</button>
+              <button id="personDismiss" class="menu-item"><span class="msi">person_off</span>Nu e o persoană</button>
+            </div>
+          </div>
         </div>
         <div id="peopleGrid" class="people-grid"></div>
         <div id="personGrid" class="j-scroll" hidden></div>
@@ -353,6 +361,14 @@
     </div>
   </div>
 
+  <div id="peoplePick" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="peoplePickTitle">Unește cu…</h2>
+      <div id="peoplePickList" class="pp-list"></div>
+      <div class="modal-actions"><span></span><button id="peoplePickClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
   <div id="cmModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Comentarii pe album</h2>
@@ -365,8 +381,8 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=40"></script>
-  <script src="/assets/app.js?v=40"></script>
-  <script src="/assets/pwa.js?v=40"></script>
+  <script src="/assets/editor.js?v=41"></script>
+  <script src="/assets/app.js?v=41"></script>
+  <script src="/assets/pwa.js?v=41"></script>
 </body>
 </html>

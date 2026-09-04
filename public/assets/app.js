@@ -1144,6 +1144,7 @@ async function renderPeople() {
   updateNav();
   $('personBack').hidden = true;
   $('personRename').hidden = true;
+  if ($('personMenuWrap')) $('personMenuWrap').hidden = true;
   $('personGrid').hidden = true;
   $('peopleGrid').hidden = false;
   $('peopleTitle').textContent = 'Persoane';
@@ -1179,12 +1180,78 @@ async function renderPerson() {
   $('personGrid').hidden = false;
   $('personBack').hidden = false;
   $('personRename').hidden = false;
+  if ($('personMenuWrap')) $('personMenuWrap').hidden = false;
   let d;
   try { d = await api('/api/people/' + cur.personId); } catch { location.hash = '#/people'; return; }
   curPerson = d.person;
   cur.items = d.items;
   $('peopleTitle').textContent = d.person.name || 'Fără nume';
   buildGallery($('personGrid'), d.items, { flat: true });
+  decoratePersonTiles();
+}
+
+// mic × pe fiecare poză din persoană = „nu e ea aici"
+function decoratePersonTiles() {
+  const byId = new Map((cur.items || []).map((x) => [x.id, x]));
+  $('personGrid').querySelectorAll('.j-tile').forEach((el) => {
+    if (el.querySelector('.face-rm')) return;
+    const b = document.createElement('button');
+    b.className = 'face-rm';
+    b.type = 'button';
+    b.title = 'Nu e persoana asta aici';
+    b.innerHTML = '<span class="msi">close</span>';
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await api('/api/people/' + cur.personId + '/remove', { method: 'POST', body: { mediaId: el.dataset.id } });
+        toast('Scos din persoană');
+        renderPerson();
+      } catch (err) { toast(err.message); }
+    };
+    el.appendChild(b);
+    if (byId.get(el.dataset.id)) {
+      const setC = document.createElement('button');
+      setC.className = 'face-cover';
+      setC.type = 'button';
+      setC.title = 'Fă asta coperta';
+      setC.innerHTML = '<span class="msi">wallpaper</span>';
+      setC.onclick = async (e) => {
+        e.stopPropagation();
+        const fid = byId.get(el.dataset.id).faceId;
+        if (!fid) return;
+        try { await api('/api/people/' + cur.personId, { method: 'PATCH', body: { coverFaceId: fid } }); toast('Copertă setată'); }
+        catch (err) { toast(err.message); }
+      };
+      el.appendChild(setC);
+    }
+  });
+}
+
+async function openPeoplePick() {
+  $('personMenu').hidden = true;
+  let list = [];
+  try { list = await api('/api/people'); } catch {}
+  const box = $('peoplePickList');
+  box.textContent = '';
+  const others = list.filter((p) => p.id !== cur.personId);
+  if (!others.length) box.innerHTML = '<p class="muted">Nicio altă persoană.</p>';
+  for (const p of others) {
+    const b = document.createElement('button');
+    b.className = 'pp-row';
+    b.type = 'button';
+    b.innerHTML = '<img loading="lazy" src="/api/faces/' + (p.coverFaceId || '') + '/crop"><span>' + escapeHtml(p.name || 'Fără nume') + ' · ' + p.n + '</span>';
+    b.onclick = async () => {
+      if (!confirm('Unești persoana curentă în „' + (p.name || 'Fără nume') + '"?')) return;
+      try {
+        await api('/api/people/' + cur.personId + '/merge', { method: 'POST', body: { into: p.id } });
+        $('peoplePick').hidden = true;
+        toast('Unite');
+        location.hash = '#/person/' + p.id;
+      } catch (e) { toast(e.message); }
+    };
+    box.appendChild(b);
+  }
+  $('peoplePick').hidden = false;
 }
 
 async function renamePerson() {
@@ -2050,6 +2117,19 @@ function wire() {
   // ─── Găsește persoane (fețe) ───────────────────────────────────────────
   $('personBack').onclick = () => { location.hash = '#/people'; };
   $('personRename').onclick = () => renamePerson();
+  if ($('personMenuBtn')) {
+    $('personMenuBtn').onclick = (e) => { e.stopPropagation(); $('personMenu').hidden = !$('personMenu').hidden; };
+    document.addEventListener('click', () => { $('personMenu').hidden = true; });
+    $('personCover').onclick = () => { $('personMenu').hidden = true; toast('Apasă ⌗ pe poza dorită'); };
+    $('personMerge').onclick = () => openPeoplePick();
+    $('personDismiss').onclick = async () => {
+      $('personMenu').hidden = true;
+      if (!confirm('Marchezi gruparea asta ca „nu e o persoană"? Pozele rămân în galerie.')) return;
+      try { await api('/api/people/' + cur.personId, { method: 'DELETE' }); toast('Eliminată'); location.hash = '#/people'; }
+      catch (e) { toast(e.message); }
+    };
+    $('peoplePickClose').onclick = () => { $('peoplePick').hidden = true; };
+  }
   let faceTimer = null;
   const stopFace = () => { if (faceTimer) { clearInterval(faceTimer); faceTimer = null; } };
   $('facesBtn').onclick = async (e) => {
