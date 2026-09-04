@@ -203,6 +203,7 @@ function showView() {
   $('viewShares').hidden = cur.view !== 'shares';
   $('viewAlbum').hidden = cur.view !== 'album';
   $('viewPlaces').hidden = cur.view !== 'places';
+  if (railEl && !FLAT.includes(cur.view)) railEl.hidden = true;
 }
 
 function updateNav() {
@@ -303,6 +304,7 @@ function buildGallery(container, list) {
   for (const [, items] of groupBy(list, z.group)) {
     const day = document.createElement('section');
     day.className = 'j-day';
+    day.dataset.date = items[0].takenAt || items[0].createdAt;
     day.appendChild(dayHead(items[0].takenAt || items[0].createdAt, items.map((x) => x.id), z.group));
     for (const r of justify(items, width, th)) {
       const rowEl = document.createElement('div');
@@ -442,6 +444,127 @@ function renderGrid() {
   buildGallery($('grid'), list);
   $('gridEmpty').hidden = list.length > 0;
   $('gridEmptyText').textContent = EMPTY[cur.view] || 'Gol.';
+  buildTimeRail(list.length);
+}
+
+// ─── Rail de dată (fast-scroll, stil Google Photos) ────────────────────────
+let railEl = null, railBubble = null, railDragging = false;
+// body e scroller-ul real (overflow-x:hidden + height:100% pe body)
+const SCROLLER = document.body;
+function docHeight() { return SCROLLER.scrollHeight; }
+function scrollPos() { return SCROLLER.scrollTop; }
+function scrollToY(y) { SCROLLER.scrollTop = y; }
+function ensureRail() {
+  if (railEl) return;
+  railEl = document.createElement('div');
+  railEl.className = 'time-rail';
+  railEl.hidden = true;
+  railBubble = document.createElement('div');
+  railBubble.className = 'tr-bubble';
+  railBubble.hidden = true;
+  document.body.appendChild(railEl);
+  document.body.appendChild(railBubble);
+
+  const jump = (clientY) => {
+    const r = railEl.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
+    const max = docHeight() - SCROLLER.clientHeight;
+    scrollToY(f * max);
+    showBubble(clientY, f);
+  };
+  railEl.addEventListener('pointerdown', (e) => {
+    railDragging = true;
+    try { railEl.setPointerCapture(e.pointerId); } catch {}
+    railEl.classList.add('drag');
+    jump(e.clientY);
+  });
+  railEl.addEventListener('pointermove', (e) => { if (railDragging) jump(e.clientY); });
+  const end = (e) => {
+    if (!railDragging) return;
+    railDragging = false;
+    railEl.classList.remove('drag');
+    railBubble.hidden = true;
+    try { railEl.releasePointerCapture(e.pointerId); } catch {}
+  };
+  railEl.addEventListener('pointerup', end);
+  railEl.addEventListener('pointercancel', end);
+
+  let raf = 0;
+  window.addEventListener('scroll', () => {
+    if (railEl.hidden || raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const max = docHeight() - SCROLLER.clientHeight;
+      const f = max > 0 ? scrollPos() / max : 0;
+      const dot = railEl.querySelector('.tr-dot');
+      if (dot) dot.style.top = (f * 100) + '%';
+      railEl.classList.add('active');
+      clearTimeout(railEl._fade);
+      railEl._fade = setTimeout(() => railEl.classList.remove('active'), 900);
+    });
+  }, { passive: true, capture: true });
+}
+
+function showBubble(clientY, f) {
+  const ticks = railEl._ticks || [];
+  if (!ticks.length) return;
+  let best = ticks[0];
+  for (const t of ticks) if (Math.abs(t.f - f) < Math.abs(best.f - f)) best = t;
+  railBubble.textContent = best.label;
+  railBubble.hidden = false;
+  const r = railEl.getBoundingClientRect();
+  railBubble.style.top = Math.max(8, Math.min(window.innerHeight - 34, clientY - 14)) + 'px';
+  railBubble.style.right = (window.innerWidth - r.left + 8) + 'px';
+}
+
+function buildTimeRail(count) {
+  ensureRail();
+  const grid = $('grid');
+  const show = FLAT.includes(cur.view) && count >= 40 && !grid.closest('.view').hidden;
+  railEl.hidden = !show;
+  if (!show) return;
+
+  const scrollH = docHeight();
+  const days = [...grid.querySelectorAll('.j-day')];
+  const now = new Date();
+  const raw = days.map((el) => {
+    const top = el.getBoundingClientRect().top + scrollPos();
+    const d = new Date(el.dataset.date || Date.now());
+    return { f: top / scrollH, y: d.getFullYear(), m: d.getMonth(), d };
+  });
+  // Câți ani acoperă? Multe -> etichetăm pe an; altfel pe lună.
+  const years = new Set(raw.map((r) => r.y));
+  const byYear = years.size > 4;
+  const ticks = [];
+  let last = '';
+  for (const r of raw) {
+    const key = byYear ? String(r.y) : (r.y + '-' + r.m);
+    if (key === last) continue;
+    last = key;
+    const label = byYear ? String(r.y)
+      : cap(r.d.toLocaleDateString('ro-RO', r.y === now.getFullYear() ? { month: 'short' } : { month: 'short', year: 'numeric' }));
+    ticks.push({ f: r.f, label });
+  }
+  railEl._ticks = ticks;
+
+  railEl.textContent = '';
+  const dot = document.createElement('div');
+  dot.className = 'tr-dot';
+  railEl.appendChild(dot);
+
+  // Afișează etichete doar dacă sunt la cel puțin 20px una de alta (fără suprapunere).
+  const railH = railEl.getBoundingClientRect().height || 600;
+  let lastY = -999;
+  for (const t of ticks) {
+    const y = t.f * railH;
+    if (y - lastY < 20) continue;
+    lastY = y;
+    const s = document.createElement('span');
+    s.className = 'tr-tick';
+    s.style.top = (t.f * 100) + '%';
+    s.textContent = t.label;
+    railEl.appendChild(s);
+  }
 }
 
 function renderChips() {

@@ -625,3 +625,26 @@ body.selecting .chk { opacity: 1; }
 .j-scroll[data-zoom="2"] .j-dayhead, .j-scroll[data-zoom="3"] .j-dayhead { padding-top: 14px; }
 .j-scroll[data-zoom="3"] .daylabel { font-size: 12px; color: var(--text-dim); }
 .j-scroll[data-zoom="3"] .j-tile .fav-btn { display: none; }
+
+/* ── Rail de dată (fast-scroll)  v22 ───────────────────────────────────── */
+.time-rail {
+  position: fixed; right: 0; top: 118px; bottom: 12px; width: 56px; z-index: 15;
+  cursor: ns-resize; opacity: 0; transition: opacity .2s;
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.time-rail.active, .time-rail:hover, .time-rail.drag { opacity: 1; }
+.time-rail .tr-tick {
+  position: absolute; right: 10px; transform: translateY(-50%);
+  font-size: 11px; color: var(--text-dim); white-space: nowrap; pointer-events: none;
+  background: var(--bg); padding: 1px 4px; border-radius: 4px;
+}
+.time-rail .tr-dot {
+  position: absolute; right: 4px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); transform: translateY(-50%); box-shadow: 0 0 0 3px var(--accent-weak);
+}
+.tr-bubble {
+  position: fixed; z-index: 16; background: var(--accent); color: var(--accent-text);
+  font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+  box-shadow: var(--shadow); pointer-events: none; white-space: nowrap;
+}
+@media (max-width: 700px) { .time-rail { top: 104px; width: 44px; } .time-rail .tr-tick { font-size: 10px; } }
