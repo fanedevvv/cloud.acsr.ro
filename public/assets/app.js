@@ -1137,6 +1137,7 @@ function showLb() {
   const trash = cur.view === 'trash';
   lb.querySelector('.lb-fav').hidden = trash;
   lb.querySelector('.lb-archive').hidden = trash;
+  lb.querySelector('.lb-edit').hidden = trash || it.type === 'video';
   lb.querySelector('.lb-del').hidden = trash || !isAdmin;
   lb.querySelector('.lb-slideshow').hidden = trash;
   lb.querySelector('.lb-share').hidden = trash;
@@ -1306,6 +1307,16 @@ function stepLb(d) {
   if (!lbList.length) return;
   lbIndex = (lbIndex + d + lbList.length) % lbList.length;
   showLb();
+}
+
+function openLbEditor() {
+  const it = lbList[lbIndex];
+  if (!it || it.type === 'video' || !window.openEditor) return;
+  window.openEditor(it, async (file) => {
+    toast('Se salvează copia editată…');
+    await uploadFiles([file]);
+    toast('Copie editată salvată');
+  });
 }
 
 async function lbFav() {
@@ -1581,6 +1592,7 @@ function wire() {
     else if (act === 'prev') { stopSlideshow(); stepLb(-1); }
     else if (act === 'next') { stopSlideshow(); stepLb(1); }
     else if (act === 'info') toggleInfo();
+    else if (act === 'edit') openLbEditor();
     else if (act === 'fav') lbFav();
     else if (act === 'slideshow') toggleSlideshow();
     else if (act === 'share') { const it = lbList[lbIndex]; if (it) openShareModal('photo', it.id, it); }

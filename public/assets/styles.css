@@ -648,3 +648,45 @@ body.selecting .chk { opacity: 1; }
   box-shadow: var(--shadow); pointer-events: none; white-space: nowrap;
 }
 @media (max-width: 700px) { .time-rail { top: 104px; width: 44px; } .time-rail .tr-tick { font-size: 10px; } }
+
+/* ── EDITOR FOTO  v27 ─────────────────────────────────────────────────── */
+.editor { position: fixed; inset: 0; z-index: 60; background: #0d0d0f; color: #fff;
+  display: flex; flex-direction: column; }
+.ed-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.ed-bar .ed-title { flex: 1; text-align: center; font-weight: 500; }
+.ed-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent;
+  color: #fff; border: 0; font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 999px; cursor: pointer; }
+.ed-btn:hover { background: rgba(255,255,255,.12); }
+.ed-btn.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.ed-btn.primary:disabled { opacity: .5; }
+.ed-stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 8px; }
+.ed-cwrap { position: relative; }
+.ed-cwrap canvas { display: block; max-width: 100%; max-height: 100%; border-radius: 4px; }
+.ed-crop { position: absolute; border: 1px solid rgba(255,255,255,.9);
+  box-shadow: 0 0 0 100vmax rgba(0,0,0,.5); cursor: move; }
+.ed-crop i { position: absolute; width: 14px; height: 14px; border: 2px solid #fff; background: rgba(0,0,0,.4); }
+.ed-crop i[data-h=nw] { left: -7px; top: -7px; cursor: nwse-resize; }
+.ed-crop i[data-h=ne] { right: -7px; top: -7px; cursor: nesw-resize; }
+.ed-crop i[data-h=sw] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.ed-crop i[data-h=se] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.ed-tabs { display: flex; justify-content: center; gap: 6px; padding: 4px; }
+.ed-tab { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: #bbb;
+  border: 0; font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.ed-tab.on { background: rgba(255,255,255,.14); color: #fff; }
+.ed-panel { padding: 12px 18px 22px; max-width: 640px; margin: 0 auto; width: 100%; }
+.ed-slider { display: grid; grid-template-columns: 96px 1fr 46px; align-items: center; gap: 12px; padding: 7px 0; font-size: 13px; }
+.ed-slider input[type=range] { width: 100%; accent-color: var(--accent); }
+.ed-slider b { text-align: right; color: #bbb; font-weight: 400; }
+.ed-filters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.ed-filt { background: rgba(255,255,255,.1); color: #fff; border: 0; font: inherit; font-size: 13px;
+  padding: 8px 16px; border-radius: 999px; cursor: pointer; }
+.ed-filt.on { background: var(--accent); color: var(--accent-text); }
+.ed-crop-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.ed-ic { position: relative; background: rgba(255,255,255,.1); color: #fff; border: 0; width: 40px; height: 40px;
+  border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
+.ed-ic .ed-v { position: absolute; right: 4px; bottom: 2px; font-size: 9px; }
+.ed-sep { width: 1px; height: 26px; background: rgba(255,255,255,.2); margin: 0 4px; }
+.ed-aspects { display: flex; gap: 6px; flex-wrap: wrap; }
+.ed-asp { background: rgba(255,255,255,.1); color: #fff; border: 0; font: inherit; font-size: 12px;
+  padding: 7px 12px; border-radius: 999px; cursor: pointer; }
+.ed-asp.on { background: var(--accent); color: var(--accent-text); }
