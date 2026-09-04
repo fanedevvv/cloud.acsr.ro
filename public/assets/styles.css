@@ -771,3 +771,12 @@ body.selecting .chk { opacity: 1; }
   .people-grid { padding: 12px 12px 40px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
   .person-card img { width: 88px; height: 88px; }
 }
+
+/* ── Undo toast  v39 ──────────────────────────────────────────────────── */
+.toast.has-action { display: flex; align-items: center; gap: 14px; padding-right: 8px; }
+.toast-undo {
+  background: transparent; border: 0; color: var(--accent); font: inherit; font-weight: 600;
+  cursor: pointer; padding: 6px 10px; border-radius: 8px; white-space: nowrap;
+}
+.toast-undo:hover { background: rgba(255,255,255,.12); }
+:root[data-theme="dark"] .toast-undo:hover { background: rgba(0,0,0,.08); }

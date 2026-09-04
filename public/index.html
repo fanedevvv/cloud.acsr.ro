@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=38">
+  <link rel="stylesheet" href="/assets/styles.css?v=39">
 </head>
 <body>
   <div class="app">
@@ -55,6 +55,7 @@
         <div class="spacer"></div>
         <button id="densityBtn" class="icon-btn2" aria-label="Densitate" title="Densitate grilă"><span class="msi">grid_view</span></button>
         <button id="helpBtn" class="icon-btn2" aria-label="Scurtături" title="Scurtături de tastatură"><span class="msi">keyboard</span></button>
+        <button id="camBtn" class="icon-btn2 only-mobile" aria-label="Fă o poză" title="Cameră"><span class="msi">photo_camera</span></button>
         <button id="uploadBtn" class="icon-btn2" aria-label="Încarcă" title="Încarcă"><span class="msi">upload</span></button>
         <div class="acct">
           <button id="acctBtn" class="avatar" aria-label="Cont">C</button>
@@ -73,6 +74,7 @@
           </div>
         </div>
         <input type="file" id="fileInput" accept="image/*,video/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.orf,.raf" multiple hidden>
+        <input type="file" id="camInput" accept="image/*" capture="environment" hidden>
       </header>
 
       <div id="selBar" class="sel-bar" hidden>
@@ -227,6 +229,7 @@
         <kbd>← →</kbd><span>poza anterioară / următoare (în lightbox)</span>
         <kbd>Esc</kbd><span>închide</span>
         <kbd>i</kbd><span>informații</span>
+        <kbd>e</kbd><span>editează poza</span>
         <kbd>f</kbd><span>favorite</span>
         <kbd>Space</kbd><span>slideshow pornit/oprit</span>
         <kbd>Del</kbd><span>mută în coș</span>
@@ -361,8 +364,8 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=38"></script>
-  <script src="/assets/app.js?v=38"></script>
-  <script src="/assets/pwa.js?v=38"></script>
+  <script src="/assets/editor.js?v=39"></script>
+  <script src="/assets/app.js?v=39"></script>
+  <script src="/assets/pwa.js?v=39"></script>
 </body>
 </html>

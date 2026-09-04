@@ -885,7 +885,7 @@ function renderSelActions() {
   box.textContent = '';
   const ids = () => [...selected];
   if (cur.view === 'trash') {
-    box.appendChild(selBtn('restore_from_trash', 'Restaurează', () => bulk((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat')));
+    box.appendChild(selBtn('restore_from_trash', 'Restaurează', () => bulk((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', (id) => api('/api/media/' + id + '/trash', { method: 'POST' }))));
     box.appendChild(selBtn('delete_forever', 'Șterge definitiv', () => {
       if (!confirm('Ștergi definitiv ' + selected.size + ' elemente?')) return;
       bulk((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv');
@@ -894,24 +894,24 @@ function renderSelActions() {
   }
   if (cur.view === 'locked') {
     box.appendChild(selBtn('lock_open', 'Scoate din folderul blocat',
-      () => bulk((id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }), 'Scos din folderul blocat')));
+      () => bulk((id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }), 'Scos din folderul blocat', (id) => api('/api/media/' + id + '/lock', { method: 'POST' }))));
     box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => { location.href = '/api/download?ids=' + [...selected].join(','); }));
-    if (isAdmin) box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+    if (isAdmin) box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', (id) => api('/api/media/' + id + '/restore', { method: 'POST' }))));
     return;
   }
   if (cur.view === 'archive') {
-    box.appendChild(selBtn('unarchive', 'Scoate din arhivă', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }), 'Scos din arhivă')));
+    box.appendChild(selBtn('unarchive', 'Scoate din arhivă', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }), 'Scos din arhivă', (id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }))));
   } else {
     box.appendChild(selBtn('add', 'Adaugă în album', (e) => {
       if (!selected.size) return;
       openChooser(e.currentTarget);
     }));
-    box.appendChild(selBtn('star', 'Marchează favorite', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: true } }), 'Adăugat la favorite')));
-    box.appendChild(selBtn('inventory_2', 'Arhivează', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat')));
+    box.appendChild(selBtn('star', 'Marchează favorite', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: true } }), 'Adăugat la favorite', (id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: false } }))));
+    box.appendChild(selBtn('inventory_2', 'Arhivează', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', (id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }))));
     box.appendChild(selBtn('lock', 'Mută în folderul blocat', async () => {
       const ok = await ensureLockOpen();
       if (!ok) return;
-      bulk((id) => api('/api/media/' + id + '/lock', { method: 'POST' }), 'Mutat în folderul blocat');
+      bulk((id) => api('/api/media/' + id + '/lock', { method: 'POST' }), 'Mutat în folderul blocat', (id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }));
     }));
   }
   if (cur.view === 'album') {
@@ -930,16 +930,26 @@ function renderSelActions() {
     location.href = '/api/download?ids=' + [...selected].join(',');
   }));
   if (isAdmin) {
-    box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș')));
+    box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', (id) => api('/api/media/' + id + '/restore', { method: 'POST' }))));
   }
 }
 
-async function bulk(fn, okMsg) {
+async function bulk(fn, okMsg, undoFn) {
   const ids = [...selected];
   for (const id of ids) {
     try { await fn(id); } catch { /* continuă */ }
   }
-  toast(okMsg);
+  if (undoFn) {
+    toast(okMsg, { undo: async () => {
+      for (const id of ids) { try { await undoFn(id); } catch {} }
+      await loadAll(); await loadAlbums();
+      if (cur.view === 'archive') await loadArchive();
+      if (cur.view === 'trash') await loadTrash();
+      if (cur.view === 'locked') { try { lockedList = await api('/api/media?filter=locked'); } catch {} }
+      if (cur.view === 'album') await loadAlbum(cur.albumId);
+      rerender();
+    } });
+  } else toast(okMsg);
   await loadAll();
   await loadAlbums();
   if (cur.view === 'archive') await loadArchive();
@@ -1576,11 +1586,21 @@ async function lbFav() {
   if (!$('lbInfo').hidden) renderInfo();
 }
 
-async function lbMutate(fn, msg, removeFromList) {
+async function lbMutate(fn, msg, removeFromList, undoFn) {
   const it = lbList[lbIndex];
   if (!it) return;
-  try { await fn(it.id); } catch (e) { return toast(e.message); }
-  toast(msg);
+  const uid = it.id;
+  try { await fn(uid); } catch (e) { return toast(e.message); }
+  if (undoFn) {
+    toast(msg, { undo: async () => {
+      try { await undoFn(uid); } catch {}
+      await loadAll(); await loadAlbums();
+      if (cur.view === 'archive') await loadArchive();
+      if (cur.view === 'trash') await loadTrash();
+      if (cur.view === 'album') await loadAlbum(cur.albumId);
+      rerender();
+    } });
+  } else toast(msg);
   await loadAll();
   await loadAlbums();
   if (cur.view === 'archive') await loadArchive();
@@ -1676,12 +1696,26 @@ function uploadOne(file, fill) {
 
 // ─── Toast ─────────────────────────────────────────────────────────────────
 let toastT = null;
-function toast(msg) {
+function toast(msg, opts) {
   const t = $('toast');
-  t.textContent = msg;
-  t.hidden = false;
+  t.textContent = '';
+  t.classList.toggle('has-action', !!(opts && opts.undo));
+  const span = document.createElement('span');
+  span.textContent = msg;
+  t.appendChild(span);
   clearTimeout(toastT);
-  toastT = setTimeout(() => { t.hidden = true; }, 2600);
+  if (opts && opts.undo) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-undo';
+    btn.textContent = 'Anulează';
+    btn.onclick = async () => {
+      t.hidden = true;
+      try { await opts.undo(); toast('Anulat'); } catch (e) { toast(e.message || 'nu s-a putut anula'); }
+    };
+    t.appendChild(btn);
+  }
+  t.hidden = false;
+  toastT = setTimeout(() => { t.hidden = true; }, (opts && opts.undo) ? 6500 : 2600);
 }
 
 window.__cloudUpload = (files) => uploadFiles([...files]);
@@ -1733,6 +1767,9 @@ function wire() {
 
   const fileInput = $('fileInput');
   $('uploadBtn').onclick = () => fileInput.click();
+  const camInput = $('camInput');
+  if ($('camBtn')) $('camBtn').onclick = () => camInput.click();
+  camInput.addEventListener('change', () => { if (camInput.files.length) uploadFiles([...camInput.files]); camInput.value = ''; });
   fileInput.addEventListener('change', () => {
     if (fileInput.files.length) uploadFiles([...fileInput.files]);
     fileInput.value = '';
@@ -1863,8 +1900,8 @@ function wire() {
     else if (act === 'fav') lbFav();
     else if (act === 'slideshow') toggleSlideshow();
     else if (act === 'share') { const it = lbList[lbIndex]; if (it) openShareModal('photo', it.id, it); }
-    else if (act === 'archive') lbMutate((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', true);
-    else if (act === 'trash') lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
+    else if (act === 'archive') lbMutate((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', true, (id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }));
+    else if (act === 'trash') lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true, (id) => api('/api/media/' + id + '/restore', { method: 'POST' }));
     else if (act === 'restore') lbMutate((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', true);
     else if (act === 'purge') {
       if (confirm('Ștergi definitiv acest fișier?')) lbMutate((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv', true);
@@ -1884,10 +1921,11 @@ function wire() {
       else if (e.key === 'ArrowLeft') { stopSlideshow(); stepLb(-1); }
       else if (e.key === 'ArrowRight') { stopSlideshow(); stepLb(1); }
       else if (e.key === 'i') toggleInfo();
+      else if (e.key === 'e' && cur.view !== 'trash') openLbEditor();
       else if (e.key === 'f' && cur.view !== 'trash') lbFav();
       else if (e.key === ' ') { e.preventDefault(); toggleSlideshow(); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && cur.view !== 'trash' && isAdmin) {
-        lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true);
+        lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true, (id) => api('/api/media/' + id + '/restore', { method: 'POST' }));
       }
       return;
     }
