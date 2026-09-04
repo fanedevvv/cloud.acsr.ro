@@ -814,3 +814,18 @@ body.selecting .chk { opacity: 1; }
   color: var(--text); font: inherit; cursor: pointer; border-radius: 8px; text-align: left; }
 .pp-row:hover { background: var(--hover); }
 .pp-row img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
+
+/* ── Duplicate  v43 ──────────────────────────────────────────────────── */
+.dup-list { max-height: 68vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 4px 2px; }
+.dup-group { border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.dup-kind { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.dup-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+.dup-cell { position: relative; width: 120px; height: 120px; border: 2px solid transparent; border-radius: 10px;
+  overflow: hidden; padding: 0; background: var(--surface-2); cursor: pointer; }
+.dup-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dup-cell.sel { border-color: var(--danger); }
+.dup-cell.keep { border-color: var(--accent); }
+.dup-badge { position: absolute; left: 0; right: 0; bottom: 0; font-size: 11px; padding: 2px 4px;
+  background: rgba(0,0,0,.6); color: #fff; text-align: center; }
+.dup-cell.sel .dup-badge { background: var(--danger); }
+.dup-cell.keep .dup-badge { background: var(--accent); color: var(--accent-text); }

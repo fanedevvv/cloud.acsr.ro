@@ -419,6 +419,37 @@ app.post('/api/search/retag', requireAdmin, checkCsrf, (req, res) => {
   res.json({ jobId: j.id });
 });
 
+// ─── Duplicate ───────────────────────────────────────────────────────────
+app.get('/api/duplicates', requireAuth, (req, res) => {
+  const seen = new Set();
+  const groups = [];
+  // exacte: acelasi sha256
+  for (const r of db.prepare(`
+    SELECT sha256, GROUP_CONCAT(id) ids FROM media
+    WHERE sha256 IS NOT NULL AND deleted_at IS NULL AND archived = 0 AND locked = 0
+    GROUP BY sha256 HAVING COUNT(*) > 1
+  `).all()) {
+    const ids = r.ids.split(',');
+    ids.forEach((i) => seen.add(i));
+    groups.push({ kind: 'exact', ids });
+  }
+  // aproape-identice: cosinus embeddings
+  if (req.query.near !== '0') {
+    try {
+      for (const g of search.nearDuplicates()) {
+        const ids = g.filter((i) => !seen.has(i));
+        if (ids.length > 1) { ids.forEach((i) => seen.add(i)); groups.push({ kind: 'similar', ids }); }
+      }
+    } catch { /* fără embeddings */ }
+  }
+  const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ?`);
+  res.json(groups.map((g) => ({
+    kind: g.kind,
+    items: g.ids.map((id) => get.get(id)).filter(Boolean).map(mapRow)
+      .sort((a, b) => (b.size || 0) - (a.size || 0)),
+  })).filter((g) => g.items.length > 1));
+});
+
 // ─── Persoane (grupare fețe) ─────────────────────────────────────────────
 const faces = require('./lib/faces');
 

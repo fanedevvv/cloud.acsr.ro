@@ -162,6 +162,7 @@ function applyRole() {
   hide('indexBtn', !isAdmin);
   hide('facesBtn', !isAdmin);
   hide('retagBtn', !isAdmin);
+  hide('dupBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
   hide('logoutBtn', !isAdmin);
@@ -2155,6 +2156,65 @@ function wire() {
   };
 
   initLightboxZoom();
+
+  // ─── Găsește duplicate ─────────────────────────────────────────────────
+  const dupSel = new Set();
+  $('dupBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    dupSel.clear();
+    $('dupList').innerHTML = '<p class="muted" style="padding:20px">Se caută…</p>';
+    $('dupTrash').hidden = true;
+    $('dupInfo').textContent = '';
+    $('dupModal').hidden = false;
+    let groups = [];
+    try { groups = await api('/api/duplicates'); } catch (err) { $('dupList').innerHTML = '<p class="muted">' + err.message + '</p>'; return; }
+    if (!groups.length) { $('dupList').innerHTML = '<p class="muted" style="padding:20px">Niciun duplicat găsit. 🎉</p>'; return; }
+    $('dupInfo').textContent = groups.length + (groups.length === 1 ? ' grup' : ' grupuri');
+    $('dupTrash').hidden = false;
+    const box = $('dupList');
+    box.textContent = '';
+    groups.forEach((g) => {
+      const row = document.createElement('div');
+      row.className = 'dup-group';
+      const tag = document.createElement('div');
+      tag.className = 'dup-kind';
+      tag.textContent = g.kind === 'exact' ? 'Identice' : 'Asemănătoare';
+      row.appendChild(tag);
+      const strip = document.createElement('div');
+      strip.className = 'dup-strip';
+      g.items.forEach((it, i) => {
+        const cell = document.createElement('button');
+        cell.className = 'dup-cell' + (i === 0 ? ' keep' : '');
+        cell.type = 'button';
+        cell.innerHTML = '<img loading="lazy" src="/media/' + it.id + '/thumb">'
+          + '<span class="dup-badge">' + (i === 0 ? 'păstrată' : fmtBytes(it.size || 0)) + '</span>';
+        if (i > 0) { dupSel.add(it.id); cell.classList.add('sel'); }
+        cell.onclick = () => {
+          if (dupSel.has(it.id)) { dupSel.delete(it.id); cell.classList.remove('sel'); }
+          else { dupSel.add(it.id); cell.classList.add('sel'); }
+          $('dupTrash').textContent = 'Mută ' + dupSel.size + ' în coș';
+        };
+        strip.appendChild(cell);
+      });
+      row.appendChild(strip);
+      box.appendChild(row);
+    });
+    $('dupTrash').textContent = 'Mută ' + dupSel.size + ' în coș';
+  };
+  $('dupClose').onclick = () => { $('dupModal').hidden = true; };
+  $('dupTrash').onclick = async () => {
+    if (!dupSel.size) return;
+    if (!confirm('Muți ' + dupSel.size + ' duplicate în coș?')) return;
+    const ids = [...dupSel];
+    for (const id of ids) { try { await api('/api/media/' + id + '/trash', { method: 'POST' }); } catch {} }
+    $('dupModal').hidden = true;
+    toast(ids.length + ' mutate în coș', { undo: async () => {
+      for (const id of ids) { try { await api('/api/media/' + id + '/restore', { method: 'POST' }); } catch {} }
+      await loadAll(); rerender();
+    } });
+    await loadAll(); await loadAlbums(); rerender();
+  };
 
   // ─── Indexare căutare inteligentă (CLIP + OCR) ──────────────────────────
   let idxTimer = null;
