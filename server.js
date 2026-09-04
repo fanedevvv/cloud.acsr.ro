@@ -844,6 +844,49 @@ function mediaServeGuard(req, res, next) {
 app.get('/media/:id/thumb', requireAuth, mediaServeGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/media/:id/full', requireAuth, mediaServeGuard, (req, res) => sendFull(req.mediaRow, res));
 
+// ─── Editare video (ffmpeg) + cadru -> poză ──────────────────────────────
+const vedit = require('./lib/vedit');
+
+app.get('/media/:id/frame', requireAuth, mediaServeGuard, async (req, res) => {
+  const row = req.mediaRow;
+  if (row.type !== 'video') return res.status(400).end();
+  try {
+    const buf = await vedit.frameBuffer(path.join(ORIGINAL_DIR, row.stored_name), req.query.t);
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'private, max-age=60');
+    res.send(buf);
+  } catch { res.status(500).end(); }
+});
+
+app.post('/api/media/:id/frame', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+  const row = getRow(req.params.id);
+  if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
+  if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).json({ error: 'nu există' });
+  try {
+    const r = await vedit.saveFrame(path.join(ORIGINAL_DIR, row.stored_name), row.original_name, req.body && req.body.t);
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message || 'eroare' }); }
+});
+
+app.post('/api/media/:id/video-edit', requireAuth, checkCsrf, jsonBody, (req, res) => {
+  if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
+  const row = getRow(req.params.id);
+  if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
+  if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).json({ error: 'nu există' });
+  const b = req.body || {};
+  const j = vedit.newJob();
+  vedit.runVideoEdit(j, path.join(ORIGINAL_DIR, row.stored_name), row.original_name, {
+    start: b.start, end: b.end, mute: b.mute, rotate: b.rotate,
+  }).catch((e) => console.error('vedit:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/video-edit/status/:id', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(j);
+});
+
 // ─── Ștergere ───────────────────────────────────────────────────────────────
 app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
   const row = getRow(req.params.id);

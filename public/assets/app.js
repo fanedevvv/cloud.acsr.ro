@@ -1523,7 +1523,7 @@ function showLb() {
   const trash = cur.view === 'trash';
   lb.querySelector('.lb-fav').hidden = trash;
   lb.querySelector('.lb-archive').hidden = trash;
-  lb.querySelector('.lb-edit').hidden = trash || it.type === 'video';
+  lb.querySelector('.lb-edit').hidden = trash;
   lb.querySelector('.lb-share').hidden = trash || cur.view === 'locked';
   lb.querySelector('.lb-archive').hidden = trash || cur.view === 'locked';
   lb.querySelector('.lb-del').hidden = trash || !isAdmin;
@@ -1734,7 +1734,13 @@ function stepLb(d) {
 
 function openLbEditor() {
   const it = lbList[lbIndex];
-  if (!it || it.type === 'video' || !window.openEditor) return;
+  if (!it) return;
+  if (it.type === 'video') {
+    if (!window.openVideoEditor) return;
+    window.openVideoEditor(it, async () => { await loadAll(); await loadAlbums(); rerender(); toast('Salvat'); });
+    return;
+  }
+  if (!window.openEditor) return;
   window.openEditor(it, async (file) => {
     toast('Se salvează copia editată…');
     await uploadFiles([file]);
@@ -1883,6 +1889,7 @@ function toast(msg, opts) {
 }
 
 window.__cloudUpload = (files) => uploadFiles([...files]);
+window.__api = api;
 
 // ─── Wiring ────────────────────────────────────────────────────────────────
 function wire() {

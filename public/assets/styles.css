@@ -836,3 +836,15 @@ body.selecting .chk { opacity: 1; }
 .hrow span { color: var(--text-dim); }
 .hrow.bad b { color: var(--danger); }
 .hrow.ok b { color: var(--accent); }
+
+/* ── Editor video  v44 ───────────────────────────────────────────────── */
+.veditor .ed-stage { padding: 12px; }
+.veditor #veVid { max-width: 100%; max-height: 100%; border-radius: 6px; background: #000; transition: transform .15s; }
+.ve-tl { max-width: 720px; margin: 0 auto; width: 100%; padding: 4px 18px; }
+.ve-track { position: relative; height: 40px; background: rgba(255,255,255,.12); border-radius: 8px; cursor: pointer; touch-action: none; }
+.ve-range { position: absolute; top: 0; bottom: 0; background: rgba(120,170,255,.28); border: 1px solid var(--accent); border-radius: 6px; }
+.ve-handle { position: absolute; top: -4px; width: 14px; height: 48px; margin-left: -7px; border-radius: 4px; background: var(--accent); cursor: ew-resize; }
+.ve-play { position: absolute; top: -4px; width: 2px; height: 48px; background: #fff; margin-left: -1px; pointer-events: none; }
+.ve-times { display: flex; justify-content: space-between; font-size: 12px; color: #bbb; margin-top: 6px; }
+.ve-times span:nth-child(2) { font-weight: 600; color: #fff; }
+.veditor .ed-ic.on { background: var(--accent); }
