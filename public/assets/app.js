@@ -1066,25 +1066,12 @@ function renderSelActions() {
       } catch (e) { toast(e.message); }
     }));
   }
-  box.appendChild(selBtn('movie', 'Slideshow → video', () => openSlideModal([...selected])));
   box.appendChild(selBtn('download', 'Descarcă (ZIP)', () => {
     location.href = '/api/download?ids=' + [...selected].join(',');
   }));
   if (isAdmin) {
     box.appendChild(selBtn('delete', 'Mută în coș', () => bulk((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', (id) => api('/api/media/' + id + '/restore', { method: 'POST' }))));
   }
-}
-
-let slideIds = [];
-let slideTimer2 = null;
-function openSlideModal(ids) {
-  slideIds = (ids || []).slice(0, 80);
-  if (slideIds.length < 2) { toast('Alege cel puțin 2 poze'); return; }
-  $('slideProg').hidden = true;
-  $('slideDl').hidden = true;
-  $('slideStart').disabled = false;
-  $('slideStat').textContent = '';
-  $('slideModal').hidden = false;
 }
 
 async function bulk(fn, okMsg, undoFn) {
@@ -2277,39 +2264,7 @@ function wire() {
   $('albumModerate').onclick = () => openModeration();
   if ($('albumSlideshow')) $('albumSlideshow').onclick = () => {
     $('albumMenu').hidden = true;
-    openSlideModal((cur.items || []).filter((x) => x.type === 'image').map((x) => x.id));
-  };
-
-  $('slideClose').onclick = () => { if (slideTimer2) clearInterval(slideTimer2); $('slideModal').hidden = true; };
-  $('slideStart').onclick = async () => {
-    $('slideStart').disabled = true;
-    $('slideProg').hidden = false;
-    $('slideDl').hidden = true;
-    $('slideBar').style.width = '10%';
-    $('slideStat').textContent = 'Se pornește…';
-    let jobId;
-    try {
-      const d = await api('/api/slideshow', { method: 'POST', body: {
-        ids: slideIds, seconds: Number($('slideSecs').value) || 3, kenburns: $('slideKB').checked,
-      } });
-      jobId = d.jobId;
-    } catch (e) { $('slideStat').textContent = e.message; $('slideStart').disabled = false; return; }
-    if (slideTimer2) clearInterval(slideTimer2);
-    slideTimer2 = setInterval(async () => {
-      let j;
-      try { j = await api('/api/slideshow/status/' + jobId); } catch { return; }
-      $('slideBar').style.width = (j.phase === 'done' ? 100 : j.phase === 'processing' ? 65 : 25) + '%';
-      $('slideStat').textContent = { starting: 'Se pregătește…', processing: 'Se randează cu ffmpeg…', done: 'Gata!', error: 'Eroare' }[j.phase] || j.phase;
-      if (j.phase === 'done' || j.phase === 'error') {
-        clearInterval(slideTimer2); slideTimer2 = null;
-        $('slideStart').disabled = false;
-        if (j.phase === 'done') {
-          $('slideDl').href = '/api/slideshow/' + jobId + '/download';
-          $('slideDl').hidden = false;
-          toast('Slideshow gata');
-        } else $('slideStat').textContent = 'Eroare: ' + (j.error || '');
-      }
-    }, 2000);
+    openSlideshow((cur.items || []).filter((x) => x.type === 'image').map((x) => x.id));
   };
   $('cmClose').onclick = () => { $('cmModal').hidden = true; };
   $('albumDelete').onclick = async () => {
@@ -2480,6 +2435,7 @@ function wire() {
   };
 
   initLightboxZoom();
+  wireSlideshow();
 
   // ─── Stare & backup ────────────────────────────────────────────────────
   async function loadHealth() {
@@ -2499,6 +2455,15 @@ function wire() {
       (miss ? '⚠️ ' + miss + '/' + h.integrity.total + ' lipsesc!' : 'OK (' + h.integrity.total + ')') + '</b></div>';
     html += row('Ultimul backup', h.lastBackup
       ? (new Date(h.lastBackup.at).toLocaleString('ro-RO') + ' (' + fmtBytes(h.lastBackup.size) + ')') : 'niciunul');
+    if (h.jobHistory && h.jobHistory.length) {
+      html += '<div class="hrow" style="border:0;padding-top:14px"><span>Istoric procesări</span><b></b></div>';
+      const PH = { done: '✓', error: '✗', running: '…', interrupted: '⚠' };
+      for (const j of h.jobHistory) {
+        const when = new Date(j.finishedAt || j.startedAt).toLocaleString('ro-RO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        html += '<div class="hrow job"><span>' + (PH[j.phase] || j.phase) + ' ' + escapeHtml(j.kind) + '</span><b>'
+          + (j.detail ? escapeHtml(j.detail) + ' · ' : '') + when + '</b></div>';
+      }
+    }
     box.innerHTML = html;
   }
   $('healthBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = true; $('healthModal').hidden = false; loadHealth(); };

@@ -886,3 +886,8 @@ body.selecting .chk { opacity: 1; }
 
 /* slideshow modal  v52 */
 .opt-check { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+
+/* job history in health modal  v53 */
+.hrow.job { font-size: 12px; padding: 6px 2px; }
+.hrow.job span { color: var(--text); }
+.hrow.job b { color: var(--text-dim); font-weight: 400; text-align: right; }
