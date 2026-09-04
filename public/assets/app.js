@@ -427,6 +427,11 @@ function jtile(cell) {
     s.className = 'play-badge';
     s.textContent = '▶';
     b.appendChild(s);
+  } else if (it.liveVideoId) {
+    const s = document.createElement('span');
+    s.className = 'live-badge';
+    s.innerHTML = '<span class="msi">motion_photos_on</span>';
+    b.appendChild(s);
   }
   tileObs.observe(b);
 
@@ -1643,6 +1648,7 @@ function showLb() {
     im.dataset.full = '/media/' + it.id + '/full';
     im.alt = it.originalName || '';
     lbStage.appendChild(im);
+    if (it.liveVideoId) setupLivePhoto(it);
   }
   lbDl.href = '/media/' + it.id + '/full';
   lbDl.setAttribute('download', it.originalName || it.id);
@@ -1666,6 +1672,31 @@ function showLb() {
     if (i === lbIndex) el.scrollIntoView({ inline: 'center', block: 'nearest' });
   });
   if (!$('lbInfo').hidden) renderInfo();
+}
+
+// Live Photo: badge + redă clipul de mișcare la apăsare lungă / hover
+function setupLivePhoto(it) {
+  const badge = document.createElement('button');
+  badge.className = 'lb-live';
+  badge.type = 'button';
+  badge.innerHTML = '<span class="msi">motion_photos_on</span> LIVE';
+  lbStage.appendChild(badge);
+  let vid = null;
+  const play = () => {
+    if (vid || zoom.s > 1.01) return;
+    vid = document.createElement('video');
+    vid.className = 'lb-live-vid';
+    vid.src = '/media/' + it.liveVideoId + '/full';
+    vid.muted = true; vid.playsInline = true; vid.autoplay = true;
+    vid.onended = stop;
+    lbStage.appendChild(vid);
+    vid.play().catch(() => {});
+  };
+  const stop = () => { if (vid) { vid.remove(); vid = null; } };
+  badge.addEventListener('pointerdown', (e) => { e.stopPropagation(); play(); });
+  badge.addEventListener('pointerup', stop);
+  badge.addEventListener('pointerleave', stop);
+  badge.addEventListener('click', (e) => e.stopPropagation());
 }
 
 function renderStrip() {

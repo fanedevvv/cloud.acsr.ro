@@ -139,7 +139,7 @@ const MEDIA_COLS = `
   duration, has_thumb AS hasThumb, taken_at AS takenAt, created_at AS createdAt,
   favorite, archived, caption, deleted_at AS deletedAt, share_token AS shareToken,
   lat, lon, place, camera, lens, iso, f_number AS fNumber, exposure, focal,
-  kind_auto AS kindAuto
+  kind_auto AS kindAuto, live_video_id AS liveVideoId
 `;
 
 const mapRow = (r) => ({
@@ -149,6 +149,7 @@ const mapRow = (r) => ({
   archived: !!r.archived,
   shareToken: r.shareToken || null,
   hasGeo: r.lat != null && r.lon != null,
+  liveVideoId: r.liveVideoId || null,
 });
 
 function getSharedPhoto(token) {
@@ -161,7 +162,7 @@ function mediaInAlbum(albumId) {
   return db.prepare(`
     SELECT ${MEDIA_COLS} FROM media m
     JOIN album_items ai ON ai.media_id = m.id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
   `).all(albumId).map(mapRow);
 }
@@ -172,11 +173,11 @@ function albumSummary(a) {
            MIN(COALESCE(m.taken_at, m.created_at)) firstAt,
            MAX(COALESCE(m.taken_at, m.created_at)) lastAt
     FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
   `).get(a.id);
   const newest = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
   // coperta aleasă manual, dacă e încă un membru valid; altfel cea mai recentă
@@ -184,7 +185,7 @@ function albumSummary(a) {
   if (a.cover_id) {
     const ok = db.prepare(`
       SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id
-      WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+      WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     `).get(a.id, a.cover_id);
     if (ok) coverId = a.cover_id;
   }
@@ -379,7 +380,7 @@ app.get('/api/stats', requireAuth, (req, res) => {
     // spațiul volumului unde stau efectiv pozele (poate fi alt disc / NFS)
     try { const st = fs.statfsSync(ORIGINAL_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
   }
-  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL AND locked = 0').get().n;
+  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL AND locked = 0 AND is_live_motion = 0').get().n;
   res.json({ usedBytes, totalBytes, count });
 });
 
@@ -408,7 +409,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
   if (q.length < 2) return res.json([]);
   let ids = [];
   try { ids = await search.search(q, { limit: 150 }); } catch (e) { return res.status(500).json({ error: 'căutare eșuată' }); }
-  const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ? AND deleted_at IS NULL AND archived = 0 AND locked = 0`);
+  const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ? AND deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0`);
   const rows = ids.map((id) => get.get(id)).filter(Boolean).map(mapRow);
   res.json(rows);
 });
@@ -459,7 +460,7 @@ app.get('/api/duplicates', requireAuth, (req, res) => {
   // exacte: acelasi sha256
   for (const r of db.prepare(`
     SELECT sha256, GROUP_CONCAT(id) ids FROM media
-    WHERE sha256 IS NOT NULL AND deleted_at IS NULL AND archived = 0 AND locked = 0
+    WHERE sha256 IS NOT NULL AND deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
     GROUP BY sha256 HAVING COUNT(*) > 1
   `).all()) {
     const ids = r.ids.split(',');
@@ -506,7 +507,7 @@ app.get('/api/people/:cid', requireAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
     WHERE id IN (SELECT DISTINCT media_id FROM faces WHERE cluster_id = ?)
-      AND deleted_at IS NULL AND locked = 0
+      AND deleted_at IS NULL AND locked = 0 AND is_live_motion = 0
     ORDER BY COALESCE(taken_at, created_at) DESC
   `).all(cid).map(mapRow);
   const faceOf = db.prepare('SELECT id FROM faces WHERE cluster_id = ? AND media_id = ? LIMIT 1');
@@ -632,14 +633,14 @@ app.get('/api/media', requireAuth, (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;
   let order = 'ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC';
-  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0';
+  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0';
   if (f === 'locked') {
     if (!(req.session && req.session.lockOpen)) return res.status(403).json({ error: 'folder blocat' });
     where = 'deleted_at IS NULL AND locked = 1';
   }
-  else if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND favorite = 1';
-  else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1 AND locked = 0';
-  else if (f === 'trash') { where = 'deleted_at IS NOT NULL AND locked = 0'; order = 'ORDER BY deleted_at DESC'; }
+  else if (f === 'favorites') where = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0 AND favorite = 1';
+  else if (f === 'archive') where = 'deleted_at IS NULL AND archived = 1 AND locked = 0 AND is_live_motion = 0';
+  else if (f === 'trash') { where = 'deleted_at IS NOT NULL AND locked = 0 AND is_live_motion = 0'; order = 'ORDER BY deleted_at DESC'; }
   else if (f === 'videos') where = live + " AND type = 'video'";
   else if (f === 'screenshots') where = live + " AND kind_auto = 'screenshot'";
   else if (f === 'selfies') where = live + " AND kind_auto = 'selfie'";
@@ -656,7 +657,7 @@ app.get('/api/places', requireAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT id, type, lat, lon, place, city, country, taken_at AS takenAt, created_at AS createdAt
     FROM media
-    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND lat IS NOT NULL AND lon IS NOT NULL
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0 AND lat IS NOT NULL AND lon IS NOT NULL
     ORDER BY COALESCE(taken_at, created_at) DESC
   `).all();
   res.json(rows);
@@ -668,7 +669,7 @@ app.get('/api/places/summary', requireAuth, (req, res) => {
 
 // „Categorii" — câte elemente în fiecare secțiune automată
 app.get('/api/categories', requireAuth, (req, res) => {
-  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0';
+  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0';
   const one = (w) => db.prepare(`SELECT COUNT(*) n FROM media WHERE ${live} AND ${w}`).get().n;
   res.json({
     videos: one("type = 'video'"),
@@ -684,7 +685,7 @@ app.get('/api/memories', requireAuth, (req, res) => {
   const md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   const rows = db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
-    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
       AND strftime('%m-%d', COALESCE(taken_at, created_at)) = ?
       AND CAST(strftime('%Y', COALESCE(taken_at, created_at)) AS INTEGER) < ?
     ORDER BY COALESCE(taken_at, created_at) DESC
@@ -994,7 +995,7 @@ app.post('/api/albums/:id/items', requireAuth, checkCsrf, jsonBody, (req, res) =
   const run = db.transaction((list) => {
     let n = 0;
     for (const mid of list) {
-      if (db.prepare('SELECT 1 FROM media WHERE id = ? AND locked = 0').get(mid)) {
+      if (db.prepare('SELECT 1 FROM media WHERE id = ? AND locked = 0 AND is_live_motion = 0').get(mid)) {
         n += ins.run(a.id, mid, now).changes;
       }
     }
@@ -1137,7 +1138,7 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   if (!body && !emoji) return res.status(400).json({ error: 'mesaj gol' });
   if (mediaId) {
     if (!UUID_RE.test(mediaId)) return res.status(400).json({ error: 'poză invalidă' });
-    const inAlbum = db.prepare('SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0').get(a.id, mediaId);
+    const inAlbum = db.prepare('SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0').get(a.id, mediaId);
     if (!inAlbum) return res.status(400).json({ error: 'poza nu e în album' });
   }
   const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
@@ -1216,11 +1217,11 @@ app.get('/s/:token', shareLimiter, (req, res) => {
 
   const agg = db.prepare(`
     SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
   `).get(a.id);
   const cover = db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
-    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
   `).get(a.id);
 
