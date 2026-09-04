@@ -339,6 +339,37 @@ app.delete('/api/media/:id/lock', requireLockOpen, checkCsrf, (req, res) => {
 });
 
 // ─── Listă media ────────────────────────────────────────────────────────────
+const backup = require('./lib/backup');
+
+// Panou stare/backup (admin)
+app.get('/api/admin/health', requireAdmin, (req, res) => {
+  const by = db.prepare(`
+    SELECT type, COUNT(*) n, COALESCE(SUM(size),0) bytes
+    FROM media WHERE deleted_at IS NULL GROUP BY type
+  `).all();
+  const trashed = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM media WHERE deleted_at IS NOT NULL').get();
+  let integrity = { total: 0, missing: 0 };
+  try { integrity = backup.checkIntegrity(ORIGINAL_DIR); } catch {}
+  let fsInfo = null;
+  try { const st = fs.statfsSync(ORIGINAL_DIR); fsInfo = { total: st.blocks * st.bsize, free: st.bavail * st.bsize }; } catch {}
+  res.json({
+    media: by,
+    trash: { count: trashed.n, bytes: trashed.b },
+    albums: db.prepare('SELECT COUNT(*) n FROM albums').get().n,
+    people: db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get().n,
+    embeddings: db.prepare('SELECT COUNT(*) n FROM media_embed').get().n,
+    tags: db.prepare('SELECT COUNT(DISTINCT tag) n FROM media_tags').get().n,
+    comments: db.prepare('SELECT COUNT(*) n FROM album_comments').get().n,
+    integrity, fs: fsInfo,
+    lastBackup: backup.lastBackup(),
+  });
+});
+
+app.post('/api/admin/backup', requireAdmin, checkCsrf, async (req, res) => {
+  const f = await backup.backupNow();
+  res.json({ ok: !!f, file: f ? path.basename(f) : null, lastBackup: backup.lastBackup() });
+});
+
 app.get('/api/stats', requireAuth, (req, res) => {
   const usedBytes = db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get().s;
   let totalBytes = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB * 1e9 : 0;
@@ -1198,6 +1229,11 @@ app.listen(PORT, '127.0.0.1', () => {
   Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
   Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
   setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
+  setTimeout(() => {
+    try { backup.checkIntegrity(ORIGINAL_DIR); } catch {}
+    backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});
+  }, 20000);
+  setInterval(() => { backup.backupNow().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
   setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
   setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
 });

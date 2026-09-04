@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=43">
+  <link rel="stylesheet" href="/assets/styles.css?v=44">
 </head>
 <body>
   <div class="app">
@@ -73,6 +73,7 @@
             <button id="facesBtn" class="menu-item"><span class="msi">groups</span>Găsește persoane</button>
             <button id="retagBtn" class="menu-item"><span class="msi">category</span>Reclasifică „Lucruri"</button>
             <button id="dupBtn" class="menu-item"><span class="msi">content_copy</span>Găsește duplicate</button>
+            <button id="healthBtn" class="menu-item"><span class="msi">monitor_heart</span>Stare & backup</button>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
           </div>
         </div>
@@ -374,6 +375,17 @@
     </div>
   </div>
 
+  <div id="healthModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Stare & backup</h2>
+      <div id="healthBody" class="health-body"></div>
+      <div class="modal-actions">
+        <button id="healthBackup" class="btn primary">Fă backup acum</button>
+        <button id="healthClose" class="btn">Închide</button>
+      </div>
+    </div>
+  </div>
+
   <div id="dupModal" class="modal" hidden>
     <div class="modal-card wide">
       <div class="picker-head"><h2>Duplicate</h2><span id="dupInfo" class="muted"></span><div class="spacer"></div>
@@ -404,8 +416,8 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=43"></script>
-  <script src="/assets/app.js?v=43"></script>
-  <script src="/assets/pwa.js?v=43"></script>
+  <script src="/assets/editor.js?v=44"></script>
+  <script src="/assets/app.js?v=44"></script>
+  <script src="/assets/pwa.js?v=44"></script>
 </body>
 </html>

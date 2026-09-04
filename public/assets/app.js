@@ -163,6 +163,7 @@ function applyRole() {
   hide('facesBtn', !isAdmin);
   hide('retagBtn', !isAdmin);
   hide('dupBtn', !isAdmin);
+  hide('healthBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
   hide('logoutBtn', !isAdmin);
@@ -2156,6 +2157,35 @@ function wire() {
   };
 
   initLightboxZoom();
+
+  // ─── Stare & backup ────────────────────────────────────────────────────
+  async function loadHealth() {
+    const box = $('healthBody');
+    box.innerHTML = '<p class="muted">Se încarcă…</p>';
+    let h;
+    try { h = await api('/api/admin/health'); } catch (e) { box.innerHTML = '<p class="muted">' + e.message + '</p>'; return; }
+    const row = (k, v) => '<div class="hrow"><span>' + k + '</span><b>' + v + '</b></div>';
+    const mb = h.media.map((m) => (m.type === 'video' ? 'Clipuri' : 'Poze') + ': ' + m.n + ' (' + fmtBytes(m.bytes) + ')').join(' · ');
+    let html = row('Media', mb || '0');
+    html += row('Coș', h.trash.count + ' (' + fmtBytes(h.trash.bytes) + ')');
+    html += row('Albume / Persoane / Categorii', h.albums + ' / ' + h.people + ' / ' + h.tags);
+    html += row('Index căutare', h.embeddings + ' embeddings');
+    if (h.fs) html += row('Volum stocare', fmtBytes(h.fs.total - h.fs.free) + ' din ' + fmtBytes(h.fs.total) + ' folosiți');
+    const miss = h.integrity.missing;
+    html += '<div class="hrow ' + (miss ? 'bad' : 'ok') + '"><span>Integritate fișiere</span><b>' +
+      (miss ? '⚠️ ' + miss + '/' + h.integrity.total + ' lipsesc!' : 'OK (' + h.integrity.total + ')') + '</b></div>';
+    html += row('Ultimul backup', h.lastBackup
+      ? (new Date(h.lastBackup.at).toLocaleString('ro-RO') + ' (' + fmtBytes(h.lastBackup.size) + ')') : 'niciunul');
+    box.innerHTML = html;
+  }
+  $('healthBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = true; $('healthModal').hidden = false; loadHealth(); };
+  $('healthClose').onclick = () => { $('healthModal').hidden = true; };
+  $('healthBackup').onclick = async () => {
+    $('healthBackup').disabled = true;
+    try { await api('/api/admin/backup', { method: 'POST' }); toast('Backup făcut'); await loadHealth(); }
+    catch (e) { toast(e.message); }
+    $('healthBackup').disabled = false;
+  };
 
   // ─── Găsește duplicate ─────────────────────────────────────────────────
   const dupSel = new Set();

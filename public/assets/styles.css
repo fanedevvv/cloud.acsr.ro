@@ -829,3 +829,10 @@ body.selecting .chk { opacity: 1; }
   background: rgba(0,0,0,.6); color: #fff; text-align: center; }
 .dup-cell.sel .dup-badge { background: var(--danger); }
 .dup-cell.keep .dup-badge { background: var(--accent); color: var(--accent-text); }
+
+/* ── Stare & backup  v44 ─────────────────────────────────────────────── */
+.health-body { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; }
+.hrow { display: flex; justify-content: space-between; gap: 16px; padding: 9px 2px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.hrow span { color: var(--text-dim); }
+.hrow.bad b { color: var(--danger); }
+.hrow.ok b { color: var(--accent); }
