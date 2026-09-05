@@ -1,6 +1,6 @@
 'use strict';
 // Versiunea trebuie bumpată odată cu assets (?v=N)
-const V = 'v67';
+const V = 'v68';
 const SHELL = 'shell-' + V;
 const RUNTIME = 'runtime-' + V;
 const PRECACHE = [
@@ -14,6 +14,7 @@ const PRECACHE = [
   '/assets/theme-init.js',
   '/assets/pwa.js?v=' + V,
   '/assets/icon-192.png',
+  '/assets/logo-wordmark.png',
 ];
 
 self.addEventListener('install', (e) => {

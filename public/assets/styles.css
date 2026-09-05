@@ -125,12 +125,8 @@ body {
 
 /* ─── Lockup (identitatea noastră) ─── */
 .lockup { display: inline-flex; align-items: center; gap: 10px; font-size: 21px; color: var(--text); font-weight: 500; }
-.mark {
-  width: 30px; height: 30px; flex: none; border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), #7b5be6);
-  display: grid; place-items: center;
-}
-.mark .msi { font-size: 18px; color: #fff; }
+.brand-logo { height: 32px; width: auto; display: block; }
+.login-logo { height: 64px; margin: 0 auto 4px; }
 
 /* ─── Layout ─── */
 .app { display: flex; min-height: 100vh; }
@@ -515,7 +511,7 @@ body.selecting .chk { opacity: 1; }
   .only-mobile { display: inline-flex; }
   .topbar { padding: 0 6px; gap: 2px; }
   .topbar .lockup { font-size: 18px; }
-  .topbar .mark { width: 26px; height: 26px; }
+  .topbar .brand-logo { height: 26px; }
   .search { margin-left: 4px; }
   #densityBtn, #helpBtn { display: none; }
   .acct, #uploadBtn { flex: none; }
@@ -645,7 +641,7 @@ body.selecting .chk { opacity: 1; }
 
 .sh-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); font-weight: 500; }
 .sh-brand.small { font-size: 15px; color: var(--text-dim); }
-.sh-brand.small .mark { width: 22px; height: 22px; }
+.sh-brand.small .brand-logo { height: 24px; }
 .sh-foot { display: grid; place-items: center; padding: 40px 0 48px; }
 
 .lb-count { color: #fff; font-size: 14px; margin-left: 4px; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
