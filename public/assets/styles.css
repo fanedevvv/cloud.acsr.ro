@@ -264,6 +264,29 @@ body {
   background: linear-gradient(transparent, rgba(0, 0, 0, .6));
 }
 
+/* ─── Sugestii de film (evenimente) ─── */
+.events-strip { margin-top: 6px; }
+.evt-card { flex: none; width: 220px; height: 150px; border-radius: 14px; overflow: hidden; position: relative; background: var(--surface-2); }
+.evt-card img { width: 100%; height: 100%; object-fit: cover; }
+.evt-card .evt-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 28px 10px 10px; text-align: left;
+  color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, .7));
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+}
+.evt-card .evt-title { font-size: 13px; font-weight: 500; display: block; }
+.evt-card .evt-sub { font-size: 11px; opacity: .85; margin-top: -4px; }
+.evt-card .evt-make {
+  border: 0; border-radius: 999px;
+  background: rgba(255,255,255,.92); color: #202124; font: inherit; font-size: 12px; font-weight: 500;
+  padding: 5px 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;
+}
+.evt-card .evt-make .msi { font-size: 15px; }
+.evt-card .evt-dismiss {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; border: 0;
+  background: rgba(0,0,0,.45); color: #fff; cursor: pointer; display: grid; place-items: center;
+}
+.evt-card .evt-dismiss .msi { font-size: 16px; }
+
 /* ─── Grilă justified ─── */
 .j-scroll { max-width: 1720px; margin: 0 auto; padding: 6px 12px 48px; overflow-x: hidden; }
 .j-day { margin-bottom: 24px; }

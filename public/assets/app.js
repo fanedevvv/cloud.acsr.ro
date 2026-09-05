@@ -32,6 +32,7 @@ let searchSeq = 0;
 let searchT = null;
 let albums = [];
 let memories = [];
+let events = [];
 let stats = null;
 let isAdmin = false;
 let me = null;
@@ -103,6 +104,7 @@ async function loadAll() {
   media = await api('/api/media');
   loadStats();
   try { memories = await api('/api/memories'); } catch { memories = []; }
+  try { events = await api('/api/events/suggestions'); } catch { events = []; }
 }
 async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
 async function loadTrash() { trashList = await api('/api/media?filter=trash'); }
@@ -565,6 +567,7 @@ function renderGrid() {
   if ($('lockCloseBtn')) $('lockCloseBtn').hidden = cur.view !== 'locked';
   renderChips();
   renderMemories();
+  renderEvents();
   buildGallery($('grid'), list, { flat: searching });
   populateJump(searching ? [] : list);
   const waiting = !!(query && query.length >= 2 && searchPending);
@@ -749,6 +752,53 @@ function renderMemories() {
     c.appendChild(img);
     c.appendChild(capEl);
     c.onclick = () => openLightbox(memories, it.id);
+    strip.appendChild(c);
+  }
+}
+
+function dismissedEvents() {
+  try { return JSON.parse(localStorage.getItem('dismissedEvents') || '[]'); } catch { return []; }
+}
+function renderEvents() {
+  const strip = $('eventsStrip');
+  if (!strip) return;
+  const dismissed = new Set(dismissedEvents());
+  const list = (events || []).filter((e) => !dismissed.has(e.date));
+  const show = cur.view === 'all' && !query && list.length > 0;
+  strip.hidden = !show;
+  if (!show) return;
+  strip.textContent = '';
+  for (const ev of list) {
+    const c = document.createElement('div');
+    c.className = 'evt-card';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = '/media/' + ev.items[0].id + '/thumb';
+    c.appendChild(img);
+    const dismiss = document.createElement('button');
+    dismiss.className = 'evt-dismiss';
+    dismiss.type = 'button';
+    dismiss.title = 'Ascunde';
+    dismiss.innerHTML = '<span class="msi">close</span>';
+    dismiss.onclick = (e) => {
+      e.stopPropagation();
+      const d = dismissedEvents();
+      d.push(ev.date);
+      localStorage.setItem('dismissedEvents', JSON.stringify(d));
+      renderEvents();
+    };
+    c.appendChild(dismiss);
+    const capBox = document.createElement('div');
+    capBox.className = 'evt-cap';
+    const dateLbl = cap(new Date(ev.date + 'T12:00:00').toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' }));
+    capBox.innerHTML = '<span class="evt-title">' + dateLbl + '</span><span class="evt-sub">' + ev.count + ' poze</span>'
+      + '<button class="evt-make" type="button"><span class="msi">movie</span>Creează film</button>';
+    capBox.querySelector('.evt-make').onclick = (e) => {
+      e.stopPropagation();
+      for (const it of ev.items) if (!media.find((m) => m.id === it.id)) media.push(it);
+      openSlideshow(ev.items.map((it) => it.id));
+    };
+    c.appendChild(capBox);
     strip.appendChild(c);
   }
 }

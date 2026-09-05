@@ -1046,6 +1046,31 @@ app.get('/api/memories', requireAuth, async (req, res) => {
   res.json(rawRows.map(mapRow));
 });
 
+// „Sugestii de film" — zile din trecutul apropiat cu multe poze, bune pt. slideshow
+app.get('/api/events/suggestions', requireAuth, async (req, res) => {
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const today = new Date().toISOString().slice(0, 10);
+  const days = await db.prepare(`
+    SELECT DATE_FORMAT(COALESCE(taken_at, created_at), '%Y-%m-%d') AS day, COUNT(*) n
+    FROM media
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0 AND type = 'image'
+      AND COALESCE(taken_at, created_at) >= ? AND COALESCE(taken_at, created_at) < ?
+    GROUP BY day HAVING COUNT(*) >= 4
+    ORDER BY day DESC LIMIT 5
+  `).all(since, today);
+  const out = [];
+  for (const d of days) {
+    const rawRows = await db.prepare(`
+      SELECT ${MEDIA_COLS} FROM media
+      WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0 AND type = 'image'
+        AND DATE_FORMAT(COALESCE(taken_at, created_at), '%Y-%m-%d') = ?
+      ORDER BY COALESCE(taken_at, created_at) ASC LIMIT 40
+    `).all(d.day);
+    out.push({ date: d.day, count: d.n, items: rawRows.map(mapRow) });
+  }
+  res.json(out);
+});
+
 // Context: în ce albume e poza, dacă e partajată, ce persoane apar
 app.get('/api/media/:id/context', requireAuth, async (req, res) => {
   const row = await getRow(req.params.id);
