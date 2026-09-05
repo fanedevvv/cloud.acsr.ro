@@ -122,27 +122,21 @@ async function loadStats() {
   try { stats = await api('/api/stats'); } catch { stats = null; }
   updateStorage();
 }
-const RING_CIRC = 100.53;
 function updateStorage() {
   if (!$('storageText')) return;
   const used = stats ? stats.usedBytes : media.reduce((s, m) => s + (m.size || 0), 0);
   const total = stats ? stats.totalBytes : 0;
-  const count = stats ? stats.count : media.length;
   const pct = total ? Math.min(100, (used / total) * 100) : 0;
   const tier = pct > 90 ? 'full' : pct > 70 ? 'warn' : '';
 
-  $('storageText').textContent =
-    fmtBytes(used) + (total ? ' din ' + fmtBytes(total) : ' folosiți') + '  ·  ' + count + ' elemente';
-  $('storagePct').textContent = Math.round(pct) + '%';
+  $('storagePct').textContent = Math.round(pct) + '% folosit';
+  $('storagePct').classList.toggle('warn', tier === 'warn');
+  $('storagePct').classList.toggle('full', tier === 'full');
+  $('storageText').textContent = fmtBytes(used) + (total ? ' din ' + fmtBytes(total) : ' folosiți');
 
   $('storageFill').style.width = Math.max(1.5, pct || 4) + '%';
   $('storageFill').classList.toggle('warn', tier === 'warn');
   $('storageFill').classList.toggle('full', tier === 'full');
-
-  const ring = $('storageRingFill');
-  ring.style.strokeDashoffset = RING_CIRC - (Math.max(1.5, pct || 4) / 100) * RING_CIRC;
-  ring.classList.toggle('warn', tier === 'warn');
-  ring.classList.toggle('full', tier === 'full');
 }
 
 // ─── Temă ──────────────────────────────────────────────────────────────────
