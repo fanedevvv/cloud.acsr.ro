@@ -25,7 +25,7 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes, backfillExif, backfillPreviews, backfillBlur } = require('./lib/media');
+const { backfillHashes, backfillExif, backfillPreviews, backfillBlur, backfillOptimize } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
 const push = require('./lib/push');
@@ -1222,8 +1222,13 @@ const uploadLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { error: 'prea multe încărcări, reîncearcă mai târziu' },
 });
+// Temp pe DISCUL LOCAL (data/), nu pe volumul NFS: NFS e ~15x mai lent
+// (~30 MB/s vs ~1 GB/s). Toată procesarea (hash, metadate, thumbnail) citește
+// de aici; abia fișierul final ajunge pe NFS, o singură dată.
+const UPLOAD_TMP_DIR = path.join(DATA_DIR, 'upload-tmp');
+fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
 const upload = multer({
-  dest: TMP_DIR,
+  dest: UPLOAD_TMP_DIR,
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 50 },
 });
 
@@ -1656,7 +1661,7 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   res.json(mapComment(row));
 });
 
-const contribUpload = multer({ dest: TMP_DIR, limits: { fileSize: Math.min(MAX_UPLOAD_MB, 512) * 1024 * 1024, files: 20 } });
+const contribUpload = multer({ dest: UPLOAD_TMP_DIR, limits: { fileSize: Math.min(MAX_UPLOAD_MB, 512) * 1024 * 1024, files: 20 } });
 app.post('/api/s/:token/contrib', contribLimiter, contribUpload.array('files', 20), async (req, res, next) => {
   const a = await getSharedAlbum(req.params.token);
   if (!a) { for (const f of req.files || []) { try { fs.rmSync(f.path, { force: true }); } catch {} } return res.status(404).json({ error: 'link invalid' }); }
@@ -1849,6 +1854,19 @@ db.ready().then(async () => {
     setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
     setInterval(() => { backfillPreviews().catch(() => {}); }, 15 * 60 * 1000).unref();
     setInterval(() => { backfillBlur().catch(() => {}); }, 15 * 60 * 1000).unref();
+    setTimeout(() => { backfillOptimize().catch(() => {}); }, 90 * 1000);
+    setInterval(() => { backfillOptimize().catch(() => {}); }, 10 * 60 * 1000).unref();
+    const sweepUploadTmp = () => {
+      try {
+        const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+        for (const f of fs.readdirSync(UPLOAD_TMP_DIR)) {
+          const p = path.join(UPLOAD_TMP_DIR, f);
+          try { if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true }); } catch {}
+        }
+      } catch {}
+    };
+    sweepUploadTmp();
+    setInterval(sweepUploadTmp, 60 * 60 * 1000).unref();
     setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
   });
 }).catch((e) => {

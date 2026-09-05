@@ -2364,19 +2364,28 @@ async function uploadFiles(files) {
     return { li, fill };
   });
 
-  let ok = 0;
-  for (let i = 0; i < files.length; i++) {
-    $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
-    try {
-      await uploadOne(files[i], rows[i].fill);
-      rows[i].li.classList.add('ok');
-      ok++;
-    } catch (e) {
-      rows[i].li.classList.add('fail');
-      rows[i].fill.style.width = '100%';
-      rows[i].li.title = e && e.message ? e.message : 'eșuat';
+  // Upload-uri simultane (nu unul câte unul) — pe I/O de rețea/NFS asta
+  // scurtează mult timpul total la mai multe poze deodată.
+  const CONCURRENCY = 4;
+  let ok = 0, done = 0;
+  let next = 0;
+  async function worker() {
+    while (next < files.length) {
+      const i = next++;
+      try {
+        await uploadOne(files[i], rows[i].fill);
+        rows[i].li.classList.add('ok');
+        ok++;
+      } catch (e) {
+        rows[i].li.classList.add('fail');
+        rows[i].fill.style.width = '100%';
+        rows[i].li.title = e && e.message ? e.message : 'eșuat';
+      }
+      done++;
+      $('uploadTitle').textContent = 'Se încarcă ' + done + '/' + files.length + '…';
     }
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
   $('uploadTitle').textContent = 'Gata — ' + ok + '/' + files.length + ' încărcate';
   await loadAll();
   await loadAlbums();
