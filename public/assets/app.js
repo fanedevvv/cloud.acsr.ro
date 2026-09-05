@@ -2345,6 +2345,59 @@ function stopSlideshow() {
 }
 
 // ─── Upload ────────────────────────────────────────────────────────────────
+// Micșorează poza pe telefon înainte de trimitere: pe date mobile lățimea de
+// bandă e limita, iar o poză de 6 MB devine ~1.5 MB. EXIF-ul (data, GPS,
+// aparat) e păstrat prin re-injectare cu piexif; orientarea e aplicată în
+// pixeli, deci tag-ul de orientare se resetează ca să nu se rotească dublu.
+const UPLOAD_MAX_EDGE = 3840;
+const UPLOAD_JPEG_Q = 0.9;
+const SHRINK_MIN_BYTES = 1.6 * 1024 * 1024;
+
+function readAsDataURL(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function shrinkForUpload(file) {
+  const t = (file.type || '').toLowerCase();
+  if (!t.startsWith('image/') || t === 'image/gif' || t === 'image/webp' || t === 'image/heic' || t === 'image/heif') return file;
+  if (file.size < SHRINK_MIN_BYTES) return file;
+  let dataUrl;
+  try { dataUrl = await readAsDataURL(file); } catch { return file; }
+
+  let exifStr = null;
+  try {
+    const ex = window.piexif && window.piexif.load(dataUrl);
+    if (ex) { if (ex['0th']) ex['0th'][274] = 1; exifStr = window.piexif.dump(ex); } // 274 = Orientation -> 1
+  } catch { exifStr = null; }
+
+  const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl; }).catch(() => null);
+  if (!img || !img.naturalWidth) return file;
+
+  const scale = Math.min(1, UPLOAD_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+  if (scale === 1 && file.size < 3 * 1024 * 1024) return file; // deja mică-ish, nu merită re-encodarea
+
+  const w = Math.round(img.naturalWidth * scale);
+  const h = Math.round(img.naturalHeight * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+  let outUrl;
+  try { outUrl = canvas.toDataURL('image/jpeg', UPLOAD_JPEG_Q); } catch { return file; }
+  if (exifStr) { try { outUrl = window.piexif.insert(exifStr, outUrl); } catch { /* fără exif */ } }
+
+  const bin = atob(outUrl.split(',')[1]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  if (bytes.length >= file.size) return file; // re-encodarea n-a ajutat
+  const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+  return new File([bytes], name, { type: 'image/jpeg', lastModified: file.lastModified });
+}
+
 async function uploadFiles(files) {
   $('uploadTray').hidden = false;
   const list = $('uploadList');
@@ -2372,7 +2425,8 @@ async function uploadFiles(files) {
   for (let i = 0; i < files.length; i++) {
     $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
     try {
-      await uploadOne(files[i], rows[i].fill);
+      const f = await shrinkForUpload(files[i]).catch(() => files[i]);
+      await uploadOne(f, rows[i].fill);
       rows[i].li.classList.add('ok');
       ok++;
     } catch (e) {
