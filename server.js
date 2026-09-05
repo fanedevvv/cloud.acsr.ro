@@ -364,6 +364,12 @@ app.get('/auth/google/callback', async (req, res) => {
       || (email && (await db.prepare('SELECT * FROM users WHERE email = ? AND google_id IS NULL').get(email)));
     if (u) {
       if (!u.google_id) await db.prepare('UPDATE users SET google_id = ? WHERE id = ?').run(gid, u.id);
+      // sincronizează numele afișat cu contul Google la fiecare conectare
+      if (name && name !== u.display_name) {
+        await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
+        await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
+        u.display_name = name;
+      }
     } else {
       const first = (await db.prepare('SELECT COUNT(*) n FROM users').get()).n === 0;
       let uname = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 20) || 'user';
@@ -376,15 +382,15 @@ app.get('/auth/google/callback', async (req, res) => {
       u = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     }
 
-    // preia poza de profil (o dată, dacă nu are deja)
-    if (!u.has_avatar && payload.picture) {
+    // preia poza de profil din contul Google la fiecare conectare (o suprascrie mereu)
+    if (payload.picture) {
       try {
         const pr = await fetch(payload.picture, { signal: AbortSignal.timeout(8000) });
         if (pr.ok) {
           const buf = Buffer.from(await pr.arrayBuffer());
           await require('sharp')(buf, { failOn: 'none' }).resize(200, 200, { fit: 'cover' }).webp({ quality: 82 })
             .toFile(path.join(AVATAR_DIR, u.id + '.webp'));
-          await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
+          if (!u.has_avatar) await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
         }
       } catch { /* fără poză */ }
     }
