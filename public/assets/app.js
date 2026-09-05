@@ -173,6 +173,7 @@ function applyRole() {
   hide('facesBtn', !isAdmin);
   hide('retagBtn', !isAdmin);
   hide('dupBtn', !isAdmin);
+  hide('cleanupBtn', !isAdmin);
   hide('healthBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
   hide('importBtn', !isAdmin);
@@ -1058,8 +1059,14 @@ function renderSelActions() {
   const ids = () => [...selected];
   if (cur.view === 'trash') {
     box.appendChild(selBtn('restore_from_trash', 'Restaurează', () => bulk((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', (id) => api('/api/media/' + id + '/trash', { method: 'POST' }))));
-    box.appendChild(selBtn('delete_forever', 'Șterge definitiv', () => {
-      if (!confirm('Ștergi definitiv ' + selected.size + ' elemente?')) return;
+    box.appendChild(selBtn('delete_forever', 'Șterge definitiv', async () => {
+      const ok = await confirmDanger({
+        title: 'Ștergi definitiv?',
+        message: 'Cele ' + selected.size + ' elemente selectate se șterg definitiv, fără nicio recuperare posibilă. Scrie ȘTERGE ca să confirmi.',
+        word: 'ȘTERGE',
+        confirmLabel: 'Șterge definitiv',
+      });
+      if (!ok) return;
       bulk((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv');
     }));
     return;
@@ -2164,6 +2171,37 @@ function uploadOne(file, fill) {
 
 // ─── Toast ─────────────────────────────────────────────────────────────────
 let toastT = null;
+// Confirmare întărită pentru acțiuni permanente/ireversibile: trebuie
+// scris exact cuvântul cerut ca butonul de confirmare să se activeze.
+function confirmDanger({ title, message, word, confirmLabel }) {
+  return new Promise((resolve) => {
+    const modal = $('dangerModal');
+    $('dangerTitle').textContent = title;
+    $('dangerMsg').textContent = message;
+    $('dangerConfirm').textContent = confirmLabel || 'Confirmă';
+    $('dangerConfirm').disabled = true;
+    const input = $('dangerInput');
+    input.value = '';
+    input.placeholder = word;
+    modal.hidden = false;
+    setTimeout(() => input.focus(), 50);
+
+    const onInput = () => { $('dangerConfirm').disabled = input.value.trim().toUpperCase() !== word.toUpperCase(); };
+    const cleanup = () => {
+      modal.hidden = true;
+      input.removeEventListener('input', onInput);
+      input.removeEventListener('keydown', onKey);
+      $('dangerConfirm').onclick = null;
+      $('dangerCancel').onclick = null;
+    };
+    const onKey = (e) => { if (e.key === 'Enter' && !$('dangerConfirm').disabled) { cleanup(); resolve(true); } };
+    input.addEventListener('input', onInput);
+    input.addEventListener('keydown', onKey);
+    $('dangerConfirm').onclick = () => { cleanup(); resolve(true); };
+    $('dangerCancel').onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
 function toast(msg, opts) {
   const t = $('toast');
   t.textContent = '';
@@ -2394,7 +2432,13 @@ function wire() {
   $('uploadClose').onclick = () => { $('uploadTray').hidden = true; $('uploadList').textContent = ''; };
 
   $('emptyTrashBtn').onclick = async () => {
-    if (!confirm('Golești coșul? Toate elementele se șterg definitiv.')) return;
+    const ok = await confirmDanger({
+      title: 'Golești coșul?',
+      message: 'Cele ' + trashList.length + ' elemente din coș se șterg definitiv, fără nicio recuperare posibilă. Scrie ȘTERGE ca să confirmi.',
+      word: 'ȘTERGE',
+      confirmLabel: 'Golește coșul definitiv',
+    });
+    if (!ok) return;
     try {
       await api('/api/trash/empty', { method: 'POST' });
       await loadTrash();
@@ -2525,7 +2569,12 @@ function wire() {
     else if (act === 'trash') lbMutate((id) => api('/api/media/' + id + '/trash', { method: 'POST' }), 'Mutat în coș', true, (id) => api('/api/media/' + id + '/restore', { method: 'POST' }));
     else if (act === 'restore') lbMutate((id) => api('/api/media/' + id + '/restore', { method: 'POST' }), 'Restaurat', true);
     else if (act === 'purge') {
-      if (confirm('Ștergi definitiv acest fișier?')) lbMutate((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv', true);
+      confirmDanger({
+        title: 'Ștergi definitiv?',
+        message: 'Acest fișier se șterge definitiv, fără nicio recuperare posibilă. Scrie ȘTERGE ca să confirmi.',
+        word: 'ȘTERGE',
+        confirmLabel: 'Șterge definitiv',
+      }).then((ok) => { if (ok) lbMutate((id) => api('/api/media/' + id, { method: 'DELETE' }), 'Șters definitiv', true); });
     } else if (e.target === lb || e.target === lbStage) closeLightbox();
   });
 
@@ -2727,6 +2776,72 @@ function wire() {
     const ids = [...dupSel];
     for (const id of ids) { try { await api('/api/media/' + id + '/trash', { method: 'POST' }); } catch {} }
     $('dupModal').hidden = true;
+    toast(ids.length + ' mutate în coș', { undo: async () => {
+      for (const id of ids) { try { await api('/api/media/' + id + '/restore', { method: 'POST' }); } catch {} }
+      await loadAll(); rerender();
+    } });
+    await loadAll(); await loadAlbums(); rerender();
+  };
+
+  // ─── Curățare inteligentă spațiu ─────────────────────────────────────────
+  const cleanupSel = new Set();
+  const CLEANUP_SECTIONS = [
+    { key: 'blurry', label: 'Posibil neclare', empty: 'Nicio poză neclară găsită.' },
+    { key: 'oldScreenshots', label: 'Capturi de ecran vechi (peste 3 luni)', empty: 'Nicio captură veche.' },
+    { key: 'largeVideos', label: 'Video-uri mari (peste 200 MB)', empty: 'Niciun video mare.' },
+  ];
+  $('cleanupBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    cleanupSel.clear();
+    $('cleanupList').innerHTML = '<p class="muted" style="padding:20px">Se analizează…</p>';
+    $('cleanupTrash').hidden = true;
+    $('cleanupInfo').textContent = '';
+    $('cleanupModal').hidden = false;
+    let data;
+    try { data = await api('/api/cleanup/suggestions'); } catch (err) { $('cleanupList').innerHTML = '<p class="muted">' + err.message + '</p>'; return; }
+    const total = CLEANUP_SECTIONS.reduce((s, sec) => s + data[sec.key].length, 0);
+    if (!total) { $('cleanupList').innerHTML = '<p class="muted" style="padding:20px">Nimic de curățat. 🎉</p>'; return; }
+    $('cleanupInfo').textContent = total + ' sugestii';
+    $('cleanupTrash').hidden = false;
+    const box = $('cleanupList');
+    box.textContent = '';
+    for (const sec of CLEANUP_SECTIONS) {
+      const items = data[sec.key];
+      if (!items.length) continue;
+      const row = document.createElement('div');
+      row.className = 'dup-group';
+      const tag = document.createElement('div');
+      tag.className = 'dup-kind';
+      tag.textContent = sec.label + ' (' + items.length + ')';
+      row.appendChild(tag);
+      const strip = document.createElement('div');
+      strip.className = 'dup-strip';
+      items.forEach((it) => {
+        const cell = document.createElement('button');
+        cell.className = 'dup-cell';
+        cell.type = 'button';
+        cell.innerHTML = '<img loading="lazy" src="/media/' + it.id + '/thumb">'
+          + '<span class="dup-badge">' + fmtBytes(it.size || 0) + '</span>';
+        cell.onclick = () => {
+          if (cleanupSel.has(it.id)) { cleanupSel.delete(it.id); cell.classList.remove('sel'); }
+          else { cleanupSel.add(it.id); cell.classList.add('sel'); }
+          $('cleanupTrash').textContent = 'Mută ' + cleanupSel.size + ' în coș';
+        };
+        strip.appendChild(cell);
+      });
+      row.appendChild(strip);
+      box.appendChild(row);
+    }
+    $('cleanupTrash').textContent = 'Mută ' + cleanupSel.size + ' în coș';
+  };
+  $('cleanupClose').onclick = () => { $('cleanupModal').hidden = true; };
+  $('cleanupTrash').onclick = async () => {
+    if (!cleanupSel.size) return;
+    if (!confirm('Muți ' + cleanupSel.size + ' elemente în coș?')) return;
+    const ids = [...cleanupSel];
+    for (const id of ids) { try { await api('/api/media/' + id + '/trash', { method: 'POST' }); } catch {} }
+    $('cleanupModal').hidden = true;
     toast(ids.length + ' mutate în coș', { undo: async () => {
       for (const id of ids) { try { await api('/api/media/' + id + '/restore', { method: 'POST' }); } catch {} }
       await loadAll(); rerender();

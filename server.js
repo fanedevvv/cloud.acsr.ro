@@ -25,7 +25,7 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes, backfillExif, backfillPreviews } = require('./lib/media');
+const { backfillHashes, backfillExif, backfillPreviews, backfillBlur } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
 const push = require('./lib/push');
@@ -789,6 +789,39 @@ app.get('/api/duplicates', requireAuth, async (req, res) => {
     out.push({ kind: g.kind, items });
   }
   res.json(out.filter((g) => g.items.length > 1));
+});
+
+// ─── Curățare inteligentă spațiu ────────────────────────────────────────────
+const BLUR_CUTOFF = 40; // varianța Laplacianului sub asta = probabil neclară
+const LARGE_VIDEO_BYTES = 200 * 1024 * 1024;
+const OLD_SCREENSHOT_DAYS = 90;
+
+app.get('/api/cleanup/suggestions', requireAuth, async (req, res) => {
+  const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0';
+  const blurryRows = await db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE ${live} AND type = 'image' AND blur_done = 1 AND blur_score IS NOT NULL AND blur_score < ?
+    ORDER BY blur_score ASC LIMIT 200
+  `).all(BLUR_CUTOFF);
+
+  const cutoffDate = new Date(Date.now() - OLD_SCREENSHOT_DAYS * 86400000).toISOString();
+  const oldScreenshotRows = await db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE ${live} AND kind_auto = 'screenshot' AND COALESCE(taken_at, created_at) < ?
+    ORDER BY COALESCE(taken_at, created_at) ASC LIMIT 200
+  `).all(cutoffDate);
+
+  const largeVideoRows = await db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE ${live} AND type = 'video' AND size > ?
+    ORDER BY size DESC LIMIT 200
+  `).all(LARGE_VIDEO_BYTES);
+
+  res.json({
+    blurry: blurryRows.map(mapRow),
+    oldScreenshots: oldScreenshotRows.map(mapRow),
+    largeVideos: largeVideoRows.map(mapRow),
+  });
 });
 
 // ─── Persoane (grupare fețe) ─────────────────────────────────────────────
@@ -1688,6 +1721,7 @@ db.ready().then(async () => {
     Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
     setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
     setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
+    setTimeout(() => { backfillBlur().catch((e) => console.error('blur:', e)); }, 30000);
     setTimeout(() => {
       backup.checkIntegrity(ORIGINAL_DIR).catch(() => {});
       backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});

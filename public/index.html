@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=61">
+  <link rel="stylesheet" href="/assets/styles.css?v=62">
 </head>
 <body>
   <div class="app">
@@ -75,6 +75,7 @@
             <button id="facesBtn" class="menu-item"><span class="msi">groups</span>Găsește persoane</button>
             <button id="retagBtn" class="menu-item"><span class="msi">category</span>Reclasifică „Lucruri"</button>
             <button id="dupBtn" class="menu-item"><span class="msi">content_copy</span>Găsește duplicate</button>
+            <button id="cleanupBtn" class="menu-item"><span class="msi">auto_delete</span>Curățare inteligentă</button>
             <button id="healthBtn" class="menu-item"><span class="msi">monitor_heart</span>Stare & backup</button>
             <button id="pushBtn" class="menu-item" hidden><span class="msi">notifications</span><span id="pushBtnLbl">Activează notificări</span></button>
             <button id="logoutBtn" class="menu-item"><span class="msi">logout</span>Ieși din cont</button>
@@ -476,6 +477,28 @@
     </div>
   </div>
 
+  <div id="dangerModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="dangerTitle">Confirmare</h2>
+      <p id="dangerMsg" class="muted"></p>
+      <input id="dangerInput" type="text" autocomplete="off" autocapitalize="none">
+      <div class="modal-actions">
+        <button id="dangerCancel" class="btn">Anulează</button>
+        <button id="dangerConfirm" class="btn primary danger" disabled>Confirmă</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cleanupModal" class="modal" hidden>
+    <div class="modal-card wide">
+      <div class="picker-head"><h2>Curățare inteligentă</h2><span id="cleanupInfo" class="muted"></span><div class="spacer"></div>
+        <button id="cleanupTrash" class="btn primary" hidden>Mută selecțiile în coș</button>
+        <button id="cleanupClose" class="btn">Închide</button>
+      </div>
+      <div id="cleanupList" class="dup-list"></div>
+    </div>
+  </div>
+
   <div id="peoplePick" class="modal" hidden>
     <div class="modal-card">
       <h2 id="peoplePickTitle">Unește cu…</h2>
@@ -496,9 +519,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=61"></script>
-  <script src="/assets/veditor.js?v=61"></script>
-  <script src="/assets/app.js?v=61"></script>
-  <script src="/assets/pwa.js?v=61"></script>
+  <script src="/assets/editor.js?v=62"></script>
+  <script src="/assets/veditor.js?v=62"></script>
+  <script src="/assets/app.js?v=62"></script>
+  <script src="/assets/pwa.js?v=62"></script>
 </body>
 </html>
