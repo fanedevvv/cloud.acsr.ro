@@ -951,6 +951,8 @@ function renderAlbums() {
   const grid = $('albumsGrid');
   grid.textContent = '';
   $('albumsEmpty').hidden = albums.length > 0;
+  // Album nou doar dacă ai poze proprii încărcate
+  $('newAlbumBtn').hidden = !(me && me.canMakeAlbum);
   for (const a of albums) grid.appendChild(albumCard(a));
 }
 
@@ -1346,6 +1348,7 @@ function wireSlideshow() {
 function openChooser(anchor) {
   const menu = $('chooser');
   const list = $('chooserList');
+  $('chooserNew').hidden = !(me && me.canMakeAlbum);
   list.textContent = '';
   if (!albums.length) {
     const p = document.createElement('div');

@@ -272,11 +272,19 @@ const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024
 
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  return (await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled FROM users WHERE id = ?').get(req.session.userId)) || null;
+  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled FROM users WHERE id = ?').get(req.session.userId);
+  if (!u) return null;
+  u.own_uploads = u.is_admin ? 1 : (await db.prepare('SELECT 1 v FROM media WHERE uploader_id = ? AND deleted_at IS NULL LIMIT 1').get(u.id)) ? 1 : 0;
+  return u;
 }
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, username: u.username, displayName: u.display_name, hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, totpEnabled: !!u.totp_enabled, avatar: '/api/users/' + u.id + '/avatar' };
+  return {
+    id: u.id, username: u.username, displayName: u.display_name,
+    hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, totpEnabled: !!u.totp_enabled,
+    canMakeAlbum: !!(u.is_admin || u.own_uploads),
+    avatar: '/api/users/' + u.id + '/avatar',
+  };
 }
 function requireAccount(req, res, next) {
   if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
@@ -1234,10 +1242,11 @@ const upload = multer({
 
 app.post('/api/upload', requireAccount, uploadLimiter, checkCsrf, upload.array('files', 50), async (req, res, next) => {
   try {
+    const cu = await currentUser(req);
     const items = [];
     for (const file of req.files || []) {
       try {
-        items.push(await processUpload(file));
+        items.push(await processUpload(file, cu ? cu.id : null));
       } catch (e) {
         try { fs.rmSync(file.path, { force: true }); } catch { /* deja mutat */ }
         items.push({ error: e.message || 'procesare eșuată', name: file.originalname });
@@ -1398,10 +1407,14 @@ app.get('/api/albums', requireAuth, async (req, res) => {
   res.json(await Promise.all(rows.map(albumSummary)));
 });
 
-app.post('/api/albums', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+app.post('/api/albums', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   const name = String(req.body && req.body.name || '').trim().slice(0, 120);
   if (!name) return res.status(400).json({ error: 'nume gol' });
   const u = await currentUser(req);
+  // Poți face un album doar dacă ai poze puse de tine (admin-ul e scutit).
+  if (!u || !u.own_uploads) {
+    return res.status(403).json({ error: 'poți face un album doar după ce încarci propriile poze' });
+  }
   const id = crypto.randomUUID();
   await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, new Date().toISOString(), u ? u.id : null, u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'));
