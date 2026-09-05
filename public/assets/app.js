@@ -2290,6 +2290,48 @@ function wire2fa() {
   };
 }
 
+// ─── Notificări push ────────────────────────────────────────────────────────
+let pushConfig = null;
+function urlBase64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - base64.length % 4) % 4);
+  const base64safe = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64safe);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+async function getPushSubscription() {
+  if (!('serviceWorker' in navigator)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function subscribePush() {
+  if (Notification.permission === 'denied') throw new Error('Notificările sunt blocate din setările browserului');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Permisiune refuzată');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(pushConfig.publicKey) });
+  await api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+}
+async function unsubscribePush(sub) {
+  const endpoint = sub.endpoint;
+  await sub.unsubscribe().catch(() => {});
+  await fetch('/api/push/unsubscribe', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify({ endpoint }) }).catch(() => {});
+}
+async function refreshPushBtn() {
+  if (!pushConfig || !pushConfig.enabled || !me || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    $('pushBtn').hidden = true;
+    return;
+  }
+  $('pushBtn').hidden = false;
+  const sub = await getPushSubscription().catch(() => null);
+  $('pushBtnLbl').textContent = sub ? 'Dezactivează notificări' : 'Activează notificări';
+}
+async function initPush() {
+  try { pushConfig = await fetch('/api/push/config').then((r) => r.json()); } catch { pushConfig = { enabled: false }; }
+  await refreshPushBtn();
+}
+
 // ─── Wiring ────────────────────────────────────────────────────────────────
 function wire() {
   const openSide = () => { $('side').classList.add('open'); $('sideScrim').hidden = false; };
@@ -2614,6 +2656,19 @@ function wire() {
     catch (e) { toast(e.message); }
     $('healthBackup').disabled = false;
   };
+
+  // ─── Notificări push ─────────────────────────────────────────────────────
+  $('pushBtn').onclick = async (e) => {
+    e.stopPropagation();
+    $('acctMenu').hidden = true;
+    try {
+      const sub = await getPushSubscription();
+      if (sub) { await unsubscribePush(sub); toast('Notificări oprite'); }
+      else { await subscribePush(); toast('Notificări activate'); }
+      await refreshPushBtn();
+    } catch (err) { toast(err.message || 'Nu am putut schimba notificările'); }
+  };
+  initPush();
 
   // ─── Găsește duplicate ─────────────────────────────────────────────────
   const dupSel = new Set();

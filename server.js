@@ -28,6 +28,7 @@ const {
 const { backfillHashes, backfillExif, backfillPreviews } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const optimize = require('./lib/optimize');
+const push = require('./lib/push');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PASSWORD_HASH = process.env.PASSWORD_HASH || ''; // parola de administrator
@@ -566,6 +567,23 @@ app.get('/api/csrf', async (req, res) => {
   if (!req.session.csrf) req.session.csrf = crypto.randomBytes(32).toString('hex');
   const u = await currentUser(req);
   req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(u) }));
+});
+
+// ─── Notificări push (browser) ─────────────────────────────────────────────
+app.get('/api/push/config', (req, res) => res.json({ enabled: push.enabled, publicKey: push.publicKey }));
+
+app.post('/api/push/subscribe', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
+  try {
+    await push.subscribe(u ? u.id : null, req.body && req.body.subscription);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message || 'abonament invalid' }); }
+});
+
+app.post('/api/push/unsubscribe', checkCsrf, jsonBody, async (req, res) => {
+  const endpoint = req.body && req.body.endpoint;
+  if (endpoint) await push.unsubscribe(String(endpoint));
+  res.json({ ok: true });
 });
 
 // ─── Folder blocat (PIN) ───────────────────────────────────────────────────
@@ -1467,13 +1485,20 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   }
   const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
   await db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (:id,:album_id,:media_id,:name,:body,:emoji,:created_at,:ip_hash)').run(row);
+  const shareUrl = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
   if (COMMENT_WEBHOOK) {
-    const url = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
     const txt = '💬 ' + name + ' pe „' + a.name + '": ' + (body || emoji || '');
     fetch(COMMENT_WEBHOOK, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: txt, text: txt, album: a.name, name, body: body || null, emoji, url, at: row.created_at }),
+      body: JSON.stringify({ content: txt, text: txt, album: a.name, name, body: body || null, emoji, url: shareUrl, at: row.created_at }),
       signal: AbortSignal.timeout(8000),
+    }).catch(() => {});
+  }
+  if (a.owner_id) {
+    push.sendToUser(a.owner_id, {
+      title: name + ' a comentat pe „' + a.name + '"',
+      body: body || emoji || '',
+      url: shareUrl,
     }).catch(() => {});
   }
   res.json(mapComment(row));

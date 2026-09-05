@@ -1,6 +1,6 @@
 'use strict';
 // Versiunea trebuie bumpată odată cu assets (?v=N)
-const V = 'v58';
+const V = 'v59';
 const SHELL = 'shell-' + V;
 const RUNTIME = 'runtime-' + V;
 const PRECACHE = [
@@ -84,4 +84,27 @@ self.addEventListener('fetch', (e) => {
       })
     );
   }
+});
+
+// ─── Notificări push ────────────────────────────────────────────────────
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = {}; }
+  const title = data.title || 'Cloud';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: data.body || '',
+    icon: '/assets/icon-192.png',
+    badge: '/assets/icon-192.png',
+    data: { url: data.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil((async () => {
+    const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of list) if (c.url.includes(url) && 'focus' in c) return c.focus();
+    return clients.openWindow(url);
+  })());
 });
