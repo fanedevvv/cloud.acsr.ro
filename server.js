@@ -1847,6 +1847,8 @@ db.ready().then(async () => {
     }, 20000);
     setInterval(() => { backup.backupNow().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
     setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
+    setInterval(() => { backfillPreviews().catch(() => {}); }, 15 * 60 * 1000).unref();
+    setInterval(() => { backfillBlur().catch(() => {}); }, 15 * 60 * 1000).unref();
     setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
   });
 }).catch((e) => {
