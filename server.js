@@ -11,8 +11,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
-const SqliteStore = require('better-sqlite3-session-store')(session);
+const MySQLStore = require('express-mysql-session')(session);
 const QRCode = require('qrcode');
 const archiver = require('archiver');
 
@@ -65,13 +64,10 @@ app.use(helmet({
   crossOriginOpenerPolicy: { policy: 'same-origin' },
 }));
 
-// ─── Sesiuni (stocate în SQLite, persistă la restart) ────────────────────────
-const sessionDb = new Database(path.join(DATA_DIR, 'sessions.db'));
+// ─── Sesiuni (stocate în MariaDB, persistă la restart) ───────────────────────
+const sessionStore = new MySQLStore({}, db.pool);
 app.use(session({
-  store: new SqliteStore({
-    client: sessionDb,
-    expired: { clear: true, intervalMs: 15 * 60 * 1000 },
-  }),
+  store: sessionStore,
   name: 'sid',
   secret: SESSION_SECRET,
   resave: false,
@@ -119,18 +115,18 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
-function getRow(id) {
+async function getRow(id) {
   if (!UUID_RE.test(String(id || ''))) return null;
   return db.prepare('SELECT * FROM media WHERE id = ?').get(id);
 }
 
-function getAlbum(id) {
+async function getAlbum(id) {
   if (!UUID_RE.test(String(id || ''))) return null;
   return db.prepare('SELECT * FROM albums WHERE id = ?').get(id);
 }
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
-function getSharedAlbum(token) {
+async function getSharedAlbum(token) {
   if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
   return db.prepare('SELECT * FROM albums WHERE share_token = ?').get(token);
 }
@@ -155,30 +151,31 @@ const mapRow = (r) => ({
   liveVideoId: r.liveVideoId || null,
 });
 
-function getSharedPhoto(token) {
+async function getSharedPhoto(token) {
   if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
-  const row = db.prepare('SELECT * FROM media WHERE share_token = ?').get(token);
+  const row = await db.prepare('SELECT * FROM media WHERE share_token = ?').get(token);
   return row && !row.deleted_at && !row.locked ? row : null;
 }
 
-function mediaInAlbum(albumId) {
-  return db.prepare(`
+async function mediaInAlbum(albumId) {
+  const rows = await db.prepare(`
     SELECT ${MEDIA_COLS} FROM media m
     JOIN album_items ai ON ai.media_id = m.id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
-  `).all(albumId).map(mapRow);
+  `).all(albumId);
+  return rows.map(mapRow);
 }
 
-function albumSummary(a) {
-  const agg = db.prepare(`
+async function albumSummary(a) {
+  const agg = await db.prepare(`
     SELECT COUNT(*) n,
            MIN(COALESCE(m.taken_at, m.created_at)) firstAt,
            MAX(COALESCE(m.taken_at, m.created_at)) lastAt
     FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
   `).get(a.id);
-  const newest = db.prepare(`
+  const newest = await db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
@@ -186,7 +183,7 @@ function albumSummary(a) {
   // coperta aleasă manual, dacă e încă un membru valid; altfel cea mai recentă
   let coverId = null;
   if (a.cover_id) {
-    const ok = db.prepare(`
+    const ok = await db.prepare(`
       SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id
       WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     `).get(a.id, a.cover_id);
@@ -214,14 +211,14 @@ function albumSummary(a) {
 
 // Golește definitiv coșul: elemente șterse de peste TRASH_DAYS zile.
 const TRASH_DAYS = 30;
-function purgeTrash() {
+async function purgeTrash() {
   const cutoff = new Date(Date.now() - TRASH_DAYS * 86400000).toISOString();
-  const rows = db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL AND deleted_at < ?').all(cutoff);
+  const rows = await db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL AND deleted_at < ?').all(cutoff);
   for (const r of rows) {
     fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.preview.webp`), { force: true });
-    db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
+    await db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
   }
   if (rows.length) console.log(`coș: șterse definitiv ${rows.length} elemente`);
 }
@@ -272,9 +269,9 @@ fs.mkdirSync(AVATAR_DIR, { recursive: true });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe conturi de la acest IP' } });
 const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 
-function currentUser(req) {
+async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  return db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId) || null;
+  return (await db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId)) || null;
 }
 function pubUser(u) {
   if (!u) return null;
@@ -292,19 +289,20 @@ app.post('/api/register', registerLimiter, express.json({ limit: '4kb' }), async
   const displayName = String(b.displayName || username).trim().replace(/\s+/g, ' ').slice(0, 40) || username;
   if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'utilizator: 3–24 caractere (litere, cifre, . _ -)' });
   if (password.length < 6) return res.status(400).json({ error: 'parola: minim 6 caractere' });
-  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'utilizatorul există deja' });
-  const first = db.prepare('SELECT COUNT(*) n FROM users').get().n === 0;
+  if (await db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'utilizatorul există deja' });
+  const first = (await db.prepare('SELECT COUNT(*) n FROM users').get()).n === 0;
   const id = crypto.randomUUID();
-  db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+  await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, username, await bcrypt.hash(password, 10), displayName, first ? 1 : 0, new Date().toISOString());
-  req.session.regenerate((err) => {
+  req.session.regenerate(async (err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
     req.session.userId = id;
     req.session.displayName = displayName;
     req.session.role = first ? 'admin' : 'user';
     req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.save(() => res.json({ ok: true, user: pubUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) }));
+    const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    req.session.save(() => res.json({ ok: true, user: pubUser(u) }));
   });
 });
 
@@ -361,20 +359,20 @@ app.get('/auth/google/callback', async (req, res) => {
     const email = String(payload.email || '');
     const name = String(payload.name || email.split('@')[0] || 'Utilizator').slice(0, 40);
 
-    let u = db.prepare('SELECT * FROM users WHERE google_id = ?').get(gid)
-      || (email && db.prepare('SELECT * FROM users WHERE email = ? AND google_id IS NULL').get(email));
+    let u = (await db.prepare('SELECT * FROM users WHERE google_id = ?').get(gid))
+      || (email && (await db.prepare('SELECT * FROM users WHERE email = ? AND google_id IS NULL').get(email)));
     if (u) {
-      if (!u.google_id) db.prepare('UPDATE users SET google_id = ? WHERE id = ?').run(gid, u.id);
+      if (!u.google_id) await db.prepare('UPDATE users SET google_id = ? WHERE id = ?').run(gid, u.id);
     } else {
-      const first = db.prepare('SELECT COUNT(*) n FROM users').get().n === 0;
+      const first = (await db.prepare('SELECT COUNT(*) n FROM users').get()).n === 0;
       let uname = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 20) || 'user';
       if (uname.length < 3) uname = 'user' + uname;
       let base = uname, i = 1;
-      while (db.prepare('SELECT 1 FROM users WHERE username = ?').get(uname)) uname = base + (++i);
+      while (await db.prepare('SELECT 1 FROM users WHERE username = ?').get(uname)) uname = base + (++i);
       const id = crypto.randomUUID();
-      db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, google_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, google_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(id, uname, '', name, first ? 1 : 0, gid, email || null, new Date().toISOString());
-      u = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+      u = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     }
 
     // preia poza de profil (o dată, dacă nu are deja)
@@ -385,7 +383,7 @@ app.get('/auth/google/callback', async (req, res) => {
           const buf = Buffer.from(await pr.arrayBuffer());
           await require('sharp')(buf, { failOn: 'none' }).resize(200, 200, { fit: 'cover' }).webp({ quality: 82 })
             .toFile(path.join(AVATAR_DIR, u.id + '.webp'));
-          db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
+          await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
         }
       } catch { /* fără poză */ }
     }
@@ -411,7 +409,7 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
 
   // Cont de utilizator
   if (username) {
-    const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const u = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     let ok = false;
     try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
     if (!ok) return res.status(401).json({ error: 'utilizator sau parolă greșită' });
@@ -439,33 +437,33 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   });
 });
 
-app.get('/api/me', (req, res) => res.json({ user: pubUser(currentUser(req)), role: req.session && req.session.role || 'guest' }));
+app.get('/api/me', async (req, res) => res.json({ user: pubUser(await currentUser(req)), role: req.session && req.session.role || 'guest' }));
 
-app.patch('/api/account', requireAccount, checkCsrf, jsonBody, (req, res) => {
-  const u = currentUser(req);
+app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
   if (!u) return res.status(400).json({ error: 'niciun cont' });
   const name = String((req.body && req.body.displayName) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
   if (!name) return res.status(400).json({ error: 'nume gol' });
-  db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
-  db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
+  await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
+  await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
   req.session.displayName = name;
-  res.json({ ok: true, user: pubUser(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+  res.json({ ok: true, user: pubUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
 });
 
 app.post('/api/account/avatar', requireAccount, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
-  const u = currentUser(req);
+  const u = await currentUser(req);
   if (!u || !req.file) { if (req.file) try { fs.rmSync(req.file.path, { force: true }); } catch {} return res.status(400).json({ error: 'lipsește imaginea' }); }
   try {
     await require('sharp')(req.file.path, { failOn: 'none' }).rotate()
       .resize(200, 200, { fit: 'cover' }).webp({ quality: 82 }).toFile(path.join(AVATAR_DIR, u.id + '.webp'));
-    db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
+    await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
     res.json({ ok: true, avatar: '/api/users/' + u.id + '/avatar?t=' + Date.now() });
   } catch (e) { res.status(400).json({ error: 'imagine invalidă' }); }
   finally { try { fs.rmSync(req.file.path, { force: true }); } catch {} }
 });
 
-app.get('/api/users/:id/avatar', (req, res) => {
-  const u = db.prepare('SELECT id, display_name, has_avatar FROM users WHERE id = ?').get(String(req.params.id));
+app.get('/api/users/:id/avatar', async (req, res) => {
+  const u = await db.prepare('SELECT id, display_name, has_avatar FROM users WHERE id = ?').get(String(req.params.id));
   const p = u && u.has_avatar ? path.join(AVATAR_DIR, u.id + '.webp') : null;
   if (p && fs.existsSync(p)) {
     res.set('Cache-Control', 'public, max-age=3600');
@@ -488,15 +486,16 @@ app.post('/api/logout', (req, res) => {
   });
 });
 
-app.get('/api/csrf', (req, res) => {
+app.get('/api/csrf', async (req, res) => {
   if (!req.session.csrf) req.session.csrf = crypto.randomBytes(32).toString('hex');
-  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(currentUser(req)) }));
+  const u = await currentUser(req);
+  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(u) }));
 });
 
 // ─── Folder blocat (PIN) ───────────────────────────────────────────────────
-const getSetting = (k) => { const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(k); return r ? r.value : null; };
-const setSetting = (k, v) => db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, v);
-const lockConfigured = () => !!getSetting('lock_pin_hash');
+const getSetting = async (k) => { const r = await db.prepare('SELECT value FROM settings WHERE `key` = ?').get(k); return r ? r.value : null; };
+const setSetting = (k, v) => db.prepare('INSERT INTO settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)').run(k, v);
+const lockConfigured = async () => !!(await getSetting('lock_pin_hash'));
 function requireLockOpen(req, res, next) {
   if (req.session && req.session.lockOpen) return next();
   return res.status(403).json({ error: 'folder blocat' });
@@ -504,27 +503,27 @@ function requireLockOpen(req, res, next) {
 const PIN_RE = /^[0-9]{4,12}$/;
 const lockLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe încercări' } });
 
-app.get('/api/lock/status', (req, res) => {
-  res.json({ configured: lockConfigured(), open: !!(req.session && req.session.lockOpen) });
+app.get('/api/lock/status', async (req, res) => {
+  res.json({ configured: await lockConfigured(), open: !!(req.session && req.session.lockOpen) });
 });
 
 app.post('/api/lock/setup', checkCsrf, express.json({ limit: '4kb' }), async (req, res) => {
   const pin = String(req.body && req.body.pin || '');
   const current = String(req.body && req.body.current || '');
   if (!PIN_RE.test(pin)) return res.status(400).json({ error: 'PIN-ul trebuie să aibă 4–12 cifre' });
-  if (lockConfigured()) {
-    const ok = await bcrypt.compare(current, getSetting('lock_pin_hash')).catch(() => false);
+  if (await lockConfigured()) {
+    const ok = await bcrypt.compare(current, await getSetting('lock_pin_hash')).catch(() => false);
     if (!ok) return res.status(403).json({ error: 'PIN-ul curent e greșit' });
   }
-  setSetting('lock_pin_hash', await bcrypt.hash(pin, 10));
+  await setSetting('lock_pin_hash', await bcrypt.hash(pin, 10));
   req.session.lockOpen = true;
   req.session.save(() => res.json({ ok: true }));
 });
 
 app.post('/api/lock/unlock', lockLimiter, checkCsrf, express.json({ limit: '4kb' }), async (req, res) => {
-  if (!lockConfigured()) return res.status(400).json({ error: 'niciun PIN setat' });
+  if (!(await lockConfigured())) return res.status(400).json({ error: 'niciun PIN setat' });
   const pin = String(req.body && req.body.pin || '');
-  const ok = await bcrypt.compare(pin, getSetting('lock_pin_hash')).catch(() => false);
+  const ok = await bcrypt.compare(pin, await getSetting('lock_pin_hash')).catch(() => false);
   if (!ok) return res.status(401).json({ error: 'PIN greșit' });
   req.session.lockOpen = true;
   req.session.save(() => res.json({ ok: true }));
@@ -536,17 +535,17 @@ app.post('/api/lock/close', checkCsrf, (req, res) => {
 });
 
 // Mută în / scoate din folderul blocat (necesită folderul deschis)
-app.post('/api/media/:id/lock', requireLockOpen, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.post('/api/media/:id/lock', requireLockOpen, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE media SET locked = 1 WHERE id = ?').run(row.id);
-  db.prepare('DELETE FROM album_items WHERE media_id = ?').run(row.id);
+  await db.prepare('UPDATE media SET locked = 1 WHERE id = ?').run(row.id);
+  await db.prepare('DELETE FROM album_items WHERE media_id = ?').run(row.id);
   res.json({ ok: true });
 });
-app.delete('/api/media/:id/lock', requireLockOpen, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.delete('/api/media/:id/lock', requireLockOpen, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE media SET locked = 0 WHERE id = ?').run(row.id);
+  await db.prepare('UPDATE media SET locked = 0 WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
 
@@ -555,27 +554,27 @@ const backup = require('./lib/backup');
 const joblog = require('./lib/joblog');
 
 // Panou stare/backup (admin)
-app.get('/api/admin/health', requireAdmin, (req, res) => {
-  const by = db.prepare(`
+app.get('/api/admin/health', requireAdmin, async (req, res) => {
+  const by = await db.prepare(`
     SELECT type, COUNT(*) n, COALESCE(SUM(size),0) bytes
     FROM media WHERE deleted_at IS NULL GROUP BY type
   `).all();
-  const trashed = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM media WHERE deleted_at IS NOT NULL').get();
+  const trashed = await db.prepare('SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM media WHERE deleted_at IS NOT NULL').get();
   let integrity = { total: 0, missing: 0 };
-  try { integrity = backup.checkIntegrity(ORIGINAL_DIR); } catch {}
+  try { integrity = await backup.checkIntegrity(ORIGINAL_DIR); } catch {}
   let fsInfo = null;
   try { const st = fs.statfsSync(ORIGINAL_DIR); fsInfo = { total: st.blocks * st.bsize, free: st.bavail * st.bsize }; } catch {}
   res.json({
     media: by,
     trash: { count: trashed.n, bytes: trashed.b },
-    albums: db.prepare('SELECT COUNT(*) n FROM albums').get().n,
-    people: db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get().n,
-    embeddings: db.prepare('SELECT COUNT(*) n FROM media_embed').get().n,
-    tags: db.prepare('SELECT COUNT(DISTINCT tag) n FROM media_tags').get().n,
-    comments: db.prepare('SELECT COUNT(*) n FROM album_comments').get().n,
+    albums: (await db.prepare('SELECT COUNT(*) n FROM albums').get()).n,
+    people: (await db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get()).n,
+    embeddings: (await db.prepare('SELECT COUNT(*) n FROM media_embed').get()).n,
+    tags: (await db.prepare('SELECT COUNT(DISTINCT tag) n FROM media_tags').get()).n,
+    comments: (await db.prepare('SELECT COUNT(*) n FROM album_comments').get()).n,
     integrity, fs: fsInfo,
     lastBackup: backup.lastBackup(),
-    jobHistory: joblog.recent(15),
+    jobHistory: await joblog.recent(15),
   });
 });
 
@@ -584,25 +583,25 @@ app.post('/api/admin/backup', requireAdmin, checkCsrf, async (req, res) => {
   res.json({ ok: !!f, file: f ? path.basename(f) : null, lastBackup: backup.lastBackup() });
 });
 
-app.get('/api/stats', requireAuth, (req, res) => {
-  const usedBytes = db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get().s;
+app.get('/api/stats', requireAuth, async (req, res) => {
+  const usedBytes = (await db.prepare('SELECT COALESCE(SUM(size), 0) s FROM media').get()).s;
   let totalBytes = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB * 1e9 : 0;
   if (!totalBytes) {
     // spațiul volumului unde stau efectiv pozele (poate fi alt disc / NFS)
     try { const st = fs.statfsSync(ORIGINAL_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; }
   }
-  const count = db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL AND locked = 0 AND is_live_motion = 0').get().n;
+  const count = (await db.prepare('SELECT COUNT(*) n FROM media WHERE deleted_at IS NULL AND locked = 0 AND is_live_motion = 0').get()).n;
   res.json({ usedBytes, totalBytes, count });
 });
 
 // Optimizare spațiu (recompresie) — job în fundal
-app.post('/api/optimize', requireAdmin, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/optimize', requireAdmin, checkCsrf, jsonBody, async (req, res) => {
   if (optimize.current() && !optimize.current().finishedAt) {
     return res.status(409).json({ error: 'o optimizare rulează deja' });
   }
   const mode = req.body && req.body.mode === 'aggressive' ? 'aggressive' : 'safe';
   const withVideo = !!(req.body && req.body.video);
-  const job = optimize.start({ mode, withVideo });
+  const job = await optimize.start({ mode, withVideo });
   res.json({ jobId: job.id });
 });
 
@@ -621,12 +620,12 @@ app.get('/api/search', requireAuth, async (req, res) => {
   let ids = [];
   try { ids = await search.search(q, { limit: 150 }); } catch (e) { return res.status(500).json({ error: 'căutare eșuată' }); }
   const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ? AND deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0`);
-  const rows = ids.map((id) => get.get(id)).filter(Boolean).map(mapRow);
+  const rows = (await Promise.all(ids.map((id) => get.get(id)))).filter(Boolean).map(mapRow);
   res.json(rows);
 });
 
-app.get('/api/search/stats', requireAuth, (req, res) => {
-  try { res.json(search.stats()); } catch { res.json({ embed: 0, ocr: 0, total: 0 }); }
+app.get('/api/search/stats', requireAuth, async (req, res) => {
+  try { res.json(await search.stats()); } catch { res.json({ embed: 0, ocr: 0, total: 0 }); }
 });
 
 app.post('/api/search/index', requireAdmin, checkCsrf, jsonBody, (req, res) => {
@@ -644,15 +643,15 @@ app.get('/api/search/index/status/:id', requireAuth, (req, res) => {
 });
 
 // ─── „Lucruri" (categorii CLIP zero-shot) ────────────────────────────────
-app.get('/api/things', requireAuth, (req, res) => {
-  try { res.json(search.things()); } catch { res.json([]); }
+app.get('/api/things', requireAuth, async (req, res) => {
+  try { res.json(await search.things()); } catch { res.json([]); }
 });
 
-app.get('/api/things/:tag', requireAuth, (req, res) => {
+app.get('/api/things/:tag', requireAuth, async (req, res) => {
   let ids = [];
-  try { ids = search.thingItems(req.params.tag); } catch { ids = []; }
+  try { ids = await search.thingItems(req.params.tag); } catch { ids = []; }
   const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ?`);
-  const rows = ids.map((id) => get.get(id)).filter(Boolean).map(mapRow);
+  const rows = (await Promise.all(ids.map((id) => get.get(id)))).filter(Boolean).map(mapRow);
   res.json({ tag: String(req.params.tag), items: rows });
 });
 
@@ -665,15 +664,16 @@ app.post('/api/search/retag', requireAdmin, checkCsrf, (req, res) => {
 });
 
 // ─── Duplicate ───────────────────────────────────────────────────────────
-app.get('/api/duplicates', requireAuth, (req, res) => {
+app.get('/api/duplicates', requireAuth, async (req, res) => {
   const seen = new Set();
   const groups = [];
   // exacte: acelasi sha256
-  for (const r of db.prepare(`
+  const exactRows = await db.prepare(`
     SELECT sha256, GROUP_CONCAT(id) ids FROM media
     WHERE sha256 IS NOT NULL AND deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
     GROUP BY sha256 HAVING COUNT(*) > 1
-  `).all()) {
+  `).all();
+  for (const r of exactRows) {
     const ids = r.ids.split(',');
     ids.forEach((i) => seen.add(i));
     groups.push({ kind: 'exact', ids });
@@ -681,25 +681,27 @@ app.get('/api/duplicates', requireAuth, (req, res) => {
   // aproape-identice: cosinus embeddings
   if (req.query.near !== '0') {
     try {
-      for (const g of search.nearDuplicates()) {
+      for (const g of await search.nearDuplicates()) {
         const ids = g.filter((i) => !seen.has(i));
         if (ids.length > 1) { ids.forEach((i) => seen.add(i)); groups.push({ kind: 'similar', ids }); }
       }
     } catch { /* fără embeddings */ }
   }
   const get = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE id = ?`);
-  res.json(groups.map((g) => ({
-    kind: g.kind,
-    items: g.ids.map((id) => get.get(id)).filter(Boolean).map(mapRow)
-      .sort((a, b) => (b.size || 0) - (a.size || 0)),
-  })).filter((g) => g.items.length > 1));
+  const out = [];
+  for (const g of groups) {
+    const items = (await Promise.all(g.ids.map((id) => get.get(id)))).filter(Boolean).map(mapRow)
+      .sort((a, b) => (b.size || 0) - (a.size || 0));
+    out.push({ kind: g.kind, items });
+  }
+  res.json(out.filter((g) => g.items.length > 1));
 });
 
 // ─── Persoane (grupare fețe) ─────────────────────────────────────────────
 const faces = require('./lib/faces');
 
-app.get('/api/people', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/people', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT c.id, c.name, c.n,
            (SELECT f.media_id FROM faces f WHERE f.id = c.cover_face_id) AS coverMediaId,
            c.cover_face_id AS coverFaceId
@@ -710,90 +712,87 @@ app.get('/api/people', requireAuth, (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/people/:cid', requireAuth, (req, res) => {
+app.get('/api/people/:cid', requireAuth, async (req, res) => {
   const cid = String(req.params.cid);
   if (!UUID_RE.test(cid)) return res.status(404).json({ error: 'nu există' });
-  const cl = db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
+  const cl = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
-  const rows = db.prepare(`
+  const rawRows = await db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
     WHERE id IN (SELECT DISTINCT media_id FROM faces WHERE cluster_id = ?)
       AND deleted_at IS NULL AND locked = 0 AND is_live_motion = 0
     ORDER BY COALESCE(taken_at, created_at) DESC
-  `).all(cid).map(mapRow);
+  `).all(cid);
+  const rows = rawRows.map(mapRow);
   const faceOf = db.prepare('SELECT id FROM faces WHERE cluster_id = ? AND media_id = ? LIMIT 1');
-  for (const r of rows) { const f = faceOf.get(cid, r.id); r.faceId = f ? f.id : null; }
+  for (const r of rows) { const f = await faceOf.get(cid, r.id); r.faceId = f ? f.id : null; }
   res.json({ person: cl, items: rows });
 });
 
-app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   const cid = String(req.params.cid);
-  const cl = db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
+  const cl = await db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
   const b = req.body || {};
   if ('name' in b) {
     const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-    db.prepare('UPDATE face_clusters SET name = ? WHERE id = ?').run(name || null, cid);
+    await db.prepare('UPDATE face_clusters SET name = ? WHERE id = ?').run(name || null, cid);
   }
   if ('coverFaceId' in b) {
     const fid = String(b.coverFaceId || '');
-    const ok = UUID_RE.test(fid) && db.prepare('SELECT 1 FROM faces WHERE id = ? AND cluster_id = ?').get(fid, cid);
+    const ok = UUID_RE.test(fid) && await db.prepare('SELECT 1 FROM faces WHERE id = ? AND cluster_id = ?').get(fid, cid);
     if (!ok) return res.status(400).json({ error: 'fața nu e a persoanei' });
-    db.prepare('UPDATE face_clusters SET cover_face_id = ? WHERE id = ?').run(fid, cid);
+    await db.prepare('UPDATE face_clusters SET cover_face_id = ? WHERE id = ?').run(fid, cid);
   }
-  const out = db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
+  const out = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
   res.json({ ok: true, person: out, name: out.name });
 });
 
 // Unește persoana `cid` în persoana `into`
-app.post('/api/people/:cid/merge', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/people/:cid/merge', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   const from = String(req.params.cid);
   const into = String((req.body && req.body.into) || '');
   if (from === into) return res.status(400).json({ error: 'aceeași persoană' });
-  const a = db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(into);
-  const b = db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(from);
+  const a = await db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(into);
+  const b = await db.prepare('SELECT * FROM face_clusters WHERE id = ?').get(from);
   if (!a || !b) return res.status(404).json({ error: 'nu există' });
-  db.transaction(() => {
-    db.prepare('UPDATE faces SET cluster_id = ? WHERE cluster_id = ?').run(into, from);
-    const n = db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(into).c;
-    const name = a.name || b.name || null;
-    const cover = a.cover_face_id || b.cover_face_id || null;
-    db.prepare('UPDATE face_clusters SET n = ?, name = ?, cover_face_id = ? WHERE id = ?').run(n, name, cover, into);
-    db.prepare('DELETE FROM face_clusters WHERE id = ?').run(from);
-  })();
+  await db.prepare('UPDATE faces SET cluster_id = ? WHERE cluster_id = ?').run(into, from);
+  const n = (await db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(into)).c;
+  const name = a.name || b.name || null;
+  const cover = a.cover_face_id || b.cover_face_id || null;
+  await db.prepare('UPDATE face_clusters SET n = ?, name = ?, cover_face_id = ? WHERE id = ?').run(n, name, cover, into);
+  await db.prepare('DELETE FROM face_clusters WHERE id = ?').run(from);
   res.json({ ok: true, into });
 });
 
 // Scoate toate fețele unei poze din persoana `cid` („nu e ea în poza asta")
-app.post('/api/people/:cid/remove', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/people/:cid/remove', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   const cid = String(req.params.cid);
   const mediaId = String((req.body && req.body.mediaId) || '');
   if (!UUID_RE.test(mediaId)) return res.status(400).json({ error: 'poză invalidă' });
-  const cl = db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
+  const cl = await db.prepare('SELECT id FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
-  db.transaction(() => {
-    db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ? AND media_id = ?').run(cid, mediaId);
-    const n = db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(cid).c;
-    if (n <= 0) db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
-    else db.prepare('UPDATE face_clusters SET n = ? WHERE id = ?').run(n, cid);
-  })();
+  await db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ? AND media_id = ?').run(cid, mediaId);
+  const n = (await db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(cid)).c;
+  if (n <= 0) await db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
+  else await db.prepare('UPDATE face_clusters SET n = ? WHERE id = ?').run(n, cid);
   res.json({ ok: true });
 });
 
-app.delete('/api/people/:cid', requireAuth, checkCsrf, (req, res) => {
+app.delete('/api/people/:cid', requireAuth, checkCsrf, async (req, res) => {
   // „nu e o persoană" — ascunde clusterul (îl golim de fețe, rămâne inert)
   const cid = String(req.params.cid);
-  db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ?').run(cid);
-  db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
+  await db.prepare('UPDATE faces SET cluster_id = NULL WHERE cluster_id = ?').run(cid);
+  await db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
   res.json({ ok: true });
 });
 
 app.get('/api/faces/:fid/crop', requireAuth, async (req, res) => {
   const fid = String(req.params.fid);
   if (!UUID_RE.test(fid)) return res.status(404).end();
-  const f = db.prepare('SELECT box, media_id FROM faces WHERE id = ?').get(fid);
+  const f = await db.prepare('SELECT box, media_id FROM faces WHERE id = ?').get(fid);
   if (!f) return res.status(404).end();
-  const m = db.prepare('SELECT stored_name, locked FROM media WHERE id = ?').get(f.media_id);
+  const m = await db.prepare('SELECT stored_name, locked FROM media WHERE id = ?').get(f.media_id);
   if (!m || (m.locked && !(req.session && req.session.lockOpen))) return res.status(404).end();
   const src = path.join(ORIGINAL_DIR, m.stored_name);
   if (!fs.existsSync(src)) return res.status(404).end();
@@ -818,11 +817,11 @@ app.get('/api/faces/:fid/crop', requireAuth, async (req, res) => {
   } catch { res.status(404).end(); }
 });
 
-app.get('/api/faces/stats', requireAuth, (req, res) => {
-  const total = db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL").get().n;
-  const done = db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL AND faces_done = 1").get().n;
-  const nfaces = db.prepare('SELECT COUNT(*) n FROM faces').get().n;
-  const people = db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get().n;
+app.get('/api/faces/stats', requireAuth, async (req, res) => {
+  const total = (await db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL").get()).n;
+  const done = (await db.prepare("SELECT COUNT(*) n FROM media WHERE type='image' AND deleted_at IS NULL AND faces_done = 1").get()).n;
+  const nfaces = (await db.prepare('SELECT COUNT(*) n FROM faces').get()).n;
+  const people = (await db.prepare('SELECT COUNT(*) n FROM face_clusters WHERE n >= 2').get()).n;
   res.json({ total, done, faces: nfaces, people });
 });
 
@@ -840,7 +839,7 @@ app.get('/api/faces/index/status/:id', requireAuth, (req, res) => {
   res.json(j);
 });
 
-app.get('/api/media', requireAuth, (req, res) => {
+app.get('/api/media', requireAuth, async (req, res) => {
   const f = String(req.query.filter || 'all');
   let where;
   let order = 'ORDER BY COALESCE(taken_at, created_at) DESC, created_at DESC';
@@ -858,14 +857,14 @@ app.get('/api/media', requireAuth, (req, res) => {
   else if (f === 'geo') where = live + ' AND lat IS NOT NULL';
   else where = live;
 
-  const rows = db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
+  const rows = await db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
   res.json(rows.map(mapRow));
 });
 
 // „Locuri" — toate mediile geotag-uite, pentru vizualizarea pe hartă
 const geo = require('./lib/geo');
-app.get('/api/places', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/places', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT id, type, lat, lon, place, city, country, taken_at AS takenAt, created_at AS createdAt
     FROM media
     WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0 AND lat IS NOT NULL AND lon IS NOT NULL
@@ -874,73 +873,73 @@ app.get('/api/places', requireAuth, (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/places/summary', requireAuth, (req, res) => {
-  try { res.json(geo.placesSummary()); } catch { res.json([]); }
+app.get('/api/places/summary', requireAuth, async (req, res) => {
+  try { res.json(await geo.placesSummary()); } catch { res.json([]); }
 });
 
 // „Categorii" — câte elemente în fiecare secțiune automată
-app.get('/api/categories', requireAuth, (req, res) => {
+app.get('/api/categories', requireAuth, async (req, res) => {
   const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0';
-  const one = (w) => db.prepare(`SELECT COUNT(*) n FROM media WHERE ${live} AND ${w}`).get().n;
+  const one = async (w) => (await db.prepare(`SELECT COUNT(*) n FROM media WHERE ${live} AND ${w}`).get()).n;
   res.json({
-    videos: one("type = 'video'"),
-    screenshots: one("kind_auto = 'screenshot'"),
-    selfies: one("kind_auto = 'selfie'"),
-    geo: one('lat IS NOT NULL'),
+    videos: await one("type = 'video'"),
+    screenshots: await one("kind_auto = 'screenshot'"),
+    selfies: await one("kind_auto = 'selfie'"),
+    geo: await one('lat IS NOT NULL'),
   });
 });
 
 // „Amintiri” — poze din aceeași zi calendaristică, din anii trecuți
-app.get('/api/memories', requireAuth, (req, res) => {
+app.get('/api/memories', requireAuth, async (req, res) => {
   const now = new Date();
   const md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-  const rows = db.prepare(`
+  const rawRows = await db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
     WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
-      AND strftime('%m-%d', COALESCE(taken_at, created_at)) = ?
-      AND CAST(strftime('%Y', COALESCE(taken_at, created_at)) AS INTEGER) < ?
+      AND DATE_FORMAT(COALESCE(taken_at, created_at), '%m-%d') = ?
+      AND CAST(DATE_FORMAT(COALESCE(taken_at, created_at), '%Y') AS SIGNED) < ?
     ORDER BY COALESCE(taken_at, created_at) DESC
-  `).all(md, now.getFullYear()).map(mapRow);
-  res.json(rows);
+  `).all(md, now.getFullYear());
+  res.json(rawRows.map(mapRow));
 });
 
 // Context: în ce albume e poza, dacă e partajată, ce persoane apar
-app.get('/api/media/:id/context', requireAuth, (req, res) => {
-  const row = getRow(req.params.id);
+app.get('/api/media/:id/context', requireAuth, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  const albums = db.prepare(`
+  const albums = await db.prepare(`
     SELECT a.id, a.name FROM album_items ai JOIN albums a ON a.id = ai.album_id
     WHERE ai.media_id = ? ORDER BY a.name
   `).all(row.id);
   let people = [];
   try {
-    people = db.prepare(`
+    people = await db.prepare(`
       SELECT c.id AS cid, c.name, f.id AS faceId
       FROM faces f JOIN face_clusters c ON c.id = f.cluster_id
       WHERE f.media_id = ? AND c.n >= 2
     `).all(row.id);
   } catch { people = []; }
   let tags = [];
-  try { tags = db.prepare('SELECT tag FROM media_tags WHERE media_id = ? ORDER BY score DESC').all(row.id).map((t) => t.tag); } catch {}
+  try { tags = (await db.prepare('SELECT tag FROM media_tags WHERE media_id = ? ORDER BY score DESC').all(row.id)).map((t) => t.tag); } catch {}
   res.json({ albums, shared: !!row.share_token, people, tags, place: row.place || null });
 });
 
 // Actualizează favorite / arhivat / descriere
-app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, (req, res) => {
-  const row = getRow(req.params.id);
+app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   const b = req.body || {};
   const sets = [];
   const vals = { id: row.id };
-  if ('favorite' in b) { sets.push('favorite = @favorite'); vals.favorite = b.favorite ? 1 : 0; }
-  if ('archived' in b) { sets.push('archived = @archived'); vals.archived = b.archived ? 1 : 0; }
-  if ('caption' in b) { sets.push('caption = @caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
-  if (sets.length) db.prepare(`UPDATE media SET ${sets.join(', ')} WHERE id = @id`).run(vals);
+  if ('favorite' in b) { sets.push('favorite = :favorite'); vals.favorite = b.favorite ? 1 : 0; }
+  if ('archived' in b) { sets.push('archived = :archived'); vals.archived = b.archived ? 1 : 0; }
+  if ('caption' in b) { sets.push('caption = :caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
+  if (sets.length) await db.prepare(`UPDATE media SET ${sets.join(', ')} WHERE id = :id`).run(vals);
   res.json({ ok: true });
 });
 
 // Descărcare în bloc a mai multor elemente, ca arhivă ZIP
-app.get('/api/download', requireAuth, (req, res) => {
+app.get('/api/download', requireAuth, async (req, res) => {
   const ids = String(req.query.ids || '')
     .split(',')
     .map((s) => s.trim())
@@ -948,8 +947,8 @@ app.get('/api/download', requireAuth, (req, res) => {
     .slice(0, 500);
   if (!ids.length) return res.status(400).json({ error: 'nimic de descărcat' });
 
-  const rows = ids
-    .map((id) => db.prepare('SELECT * FROM media WHERE id = ?').get(id))
+  const getStmt = db.prepare('SELECT * FROM media WHERE id = ?');
+  const rows = (await Promise.all(ids.map((id) => getStmt.get(id))))
     .filter((r) => r && !r.deleted_at && (!r.locked || (req.session && req.session.lockOpen)));
   if (!rows.length) return res.status(404).json({ error: 'nu există' });
 
@@ -1000,27 +999,27 @@ app.get('/qr', requireAuth, async (req, res) => {
 });
 
 // Mută în coș (soft delete) / restaurează
-app.post('/api/media/:id/trash', requireAdmin, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.post('/api/media/:id/trash', requireAdmin, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE media SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
+  await db.prepare('UPDATE media SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
   res.json({ ok: true });
 });
 
-app.post('/api/media/:id/restore', requireAdmin, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.post('/api/media/:id/restore', requireAdmin, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(row.id);
+  await db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
 
-app.post('/api/trash/empty', requireAdmin, checkCsrf, (req, res) => {
-  const rows = db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL').all();
+app.post('/api/trash/empty', requireAdmin, checkCsrf, async (req, res) => {
+  const rows = await db.prepare('SELECT id, stored_name FROM media WHERE deleted_at IS NOT NULL').all();
   for (const r of rows) {
     fs.rmSync(path.join(ORIGINAL_DIR, r.stored_name), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.webp`), { force: true });
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.preview.webp`), { force: true });
-    db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
+    await db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
   }
   res.json({ ok: true, deleted: rows.length });
 });
@@ -1056,7 +1055,7 @@ app.post('/api/upload', uploadLimiter, checkCsrf, upload.array('files', 50), asy
 // ─── Import Google Photos Takeout (.zip) ────────────────────────────────────
 const importUpload = multer({ dest: TMP_DIR, limits: { fileSize: 60 * 1024 * 1024 * 1024, files: 1 } });
 
-app.post('/api/import/takeout', requireAdmin, checkCsrf, importUpload.single('file'), (req, res) => {
+app.post('/api/import/takeout', requireAdmin, checkCsrf, importUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'lipsește fișierul' });
   const job = takeout.newJob();
   takeout.runImport(req.file.path, job).catch((e) => console.error('import:', e));
@@ -1070,8 +1069,8 @@ app.get('/api/import/status/:id', requireAdmin, (req, res) => {
 });
 
 // ─── Servire fișiere (doar autentificat) ────────────────────────────────────
-function mediaServeGuard(req, res, next) {
-  const row = getRow(req.params.id);
+async function mediaServeGuard(req, res, next) {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).end();
   if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).end();
   req.mediaRow = row;
@@ -1104,7 +1103,7 @@ app.get('/media/:id/frame', requireAuth, mediaServeGuard, async (req, res) => {
 });
 
 app.post('/api/media/:id/frame', requireAuth, checkCsrf, jsonBody, async (req, res) => {
-  const row = getRow(req.params.id);
+  const row = await getRow(req.params.id);
   if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
   if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).json({ error: 'nu există' });
   try {
@@ -1113,9 +1112,9 @@ app.post('/api/media/:id/frame', requireAuth, checkCsrf, jsonBody, async (req, r
   } catch (e) { res.status(500).json({ error: e.message || 'eroare' }); }
 });
 
-app.post('/api/media/:id/video-edit', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/media/:id/video-edit', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
-  const row = getRow(req.params.id);
+  const row = await getRow(req.params.id);
   if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
   if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).json({ error: 'nu există' });
   const b = req.body || {};
@@ -1133,11 +1132,12 @@ app.get('/api/video-edit/status/:id', requireAuth, (req, res) => {
 });
 
 // ─── Slideshow -> mp4 ────────────────────────────────────────────────────
-app.post('/api/slideshow', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/slideshow', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
   const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
     .filter((x) => UUID_RE.test(String(x))).slice(0, 80);
-  const rows = ids.map((id) => db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL').get(id))
+  const getStmt = db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL');
+  const rows = (await Promise.all(ids.map((id) => getStmt.get(id))))
     .filter((r) => r && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
   if (rows.length < 2) return res.status(400).json({ error: 'alege cel puțin 2 poze' });
   const files = rows.map((r) => {
@@ -1163,37 +1163,37 @@ app.get('/api/slideshow/:id/download', requireAuth, (req, res) => {
 });
 
 // ─── Ștergere ───────────────────────────────────────────────────────────────
-app.delete('/api/media/:id', requireAdmin, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.delete('/api/media/:id', requireAdmin, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
 
   fs.rmSync(path.join(ORIGINAL_DIR, row.stored_name), { force: true });
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.webp`), { force: true });
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.preview.webp`), { force: true });
-  db.prepare('DELETE FROM media WHERE id = ?').run(row.id); // cascade album_items
+  await db.prepare('DELETE FROM media WHERE id = ?').run(row.id); // cascade album_items
   res.json({ ok: true });
 });
 
 // ─── Albume ─────────────────────────────────────────────────────────────────
-app.get('/api/albums', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM albums ORDER BY created_at DESC').all();
-  res.json(rows.map(albumSummary));
+app.get('/api/albums', requireAuth, async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM albums ORDER BY created_at DESC').all();
+  res.json(await Promise.all(rows.map(albumSummary)));
 });
 
-app.post('/api/albums', requireAuth, checkCsrf, jsonBody, (req, res) => {
+app.post('/api/albums', requireAuth, checkCsrf, jsonBody, async (req, res) => {
   const name = String(req.body && req.body.name || '').trim().slice(0, 120);
   if (!name) return res.status(400).json({ error: 'nume gol' });
-  const u = currentUser(req);
+  const u = await currentUser(req);
   const id = crypto.randomUUID();
-  db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
+  await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, new Date().toISOString(), u ? u.id : null, u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'));
-  res.json(albumSummary(getAlbum(id)));
+  res.json(await albumSummary(await getAlbum(id)));
 });
 
 // Poate edita/șterge albumul: proprietarul, un admin, sau oricine conectat pentru
 // albumele fără proprietar (create înainte de sistemul de conturi).
-function requireAlbumOwner(req, res, next) {
-  const a = getAlbum(req.params.id);
+async function requireAlbumOwner(req, res, next) {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const isAdmin = req.session && req.session.role === 'admin';
   const isOwner = a.owner_id && req.session && req.session.userId === a.owner_id;
@@ -1202,96 +1202,90 @@ function requireAlbumOwner(req, res, next) {
   return res.status(403).json({ error: 'doar cel care a creat albumul îl poate modifica' });
 }
 
-app.get('/api/albums/:id', requireAuth, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.get('/api/albums/:id', requireAuth, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  res.json({ album: albumSummary(a), items: mediaInAlbum(a.id) });
+  res.json({ album: await albumSummary(a), items: await mediaInAlbum(a.id) });
 });
 
-app.patch('/api/albums/:id', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.patch('/api/albums/:id', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const b = req.body || {};
 
   if ('name' in b) {
     const name = String(b.name || '').trim().slice(0, 120);
     if (!name) return res.status(400).json({ error: 'nume gol' });
-    db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, a.id);
+    await db.prepare('UPDATE albums SET name = ? WHERE id = ?').run(name, a.id);
   }
   if ('coverId' in b) {
     const cid = String(b.coverId || '');
     if (cid && !UUID_RE.test(cid)) return res.status(400).json({ error: 'copertă invalidă' });
     if (cid) {
-      const member = db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?').get(a.id, cid);
+      const member = await db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?').get(a.id, cid);
       if (!member) return res.status(400).json({ error: 'poza nu e în album' });
     }
-    db.prepare('UPDATE albums SET cover_id = ? WHERE id = ?').run(cid || null, a.id);
+    await db.prepare('UPDATE albums SET cover_id = ? WHERE id = ?').run(cid || null, a.id);
   }
-  if ('allowComments' in b) db.prepare('UPDATE albums SET allow_comments = ? WHERE id = ?').run(b.allowComments ? 1 : 0, a.id);
-  if ('allowContrib' in b) db.prepare('UPDATE albums SET allow_contrib = ? WHERE id = ?').run(b.allowContrib ? 1 : 0, a.id);
-  res.json(albumSummary(getAlbum(a.id)));
+  if ('allowComments' in b) await db.prepare('UPDATE albums SET allow_comments = ? WHERE id = ?').run(b.allowComments ? 1 : 0, a.id);
+  if ('allowContrib' in b) await db.prepare('UPDATE albums SET allow_contrib = ? WHERE id = ?').run(b.allowContrib ? 1 : 0, a.id);
+  res.json(await albumSummary(await getAlbum(a.id)));
 });
 
-app.delete('/api/albums/:id', requireAlbumOwner, checkCsrf, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.delete('/api/albums/:id', requireAlbumOwner, checkCsrf, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items
+  await db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items
   res.json({ ok: true });
 });
 
-app.post('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.post('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const ids = Array.isArray(req.body && req.body.ids)
     ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
-  const ins = db.prepare('INSERT OR IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
+  const ins = db.prepare('INSERT IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
   const now = new Date().toISOString();
-  const run = db.transaction((list) => {
-    let n = 0;
-    for (const mid of list) {
-      if (db.prepare('SELECT 1 FROM media WHERE id = ? AND locked = 0 AND is_live_motion = 0').get(mid)) {
-        n += ins.run(a.id, mid, now).changes;
-      }
+  let n = 0;
+  for (const mid of ids) {
+    if (await db.prepare('SELECT 1 FROM media WHERE id = ? AND locked = 0 AND is_live_motion = 0').get(mid)) {
+      n += (await ins.run(a.id, mid, now)).changes;
     }
-    return n;
-  });
-  res.json({ added: run(ids) });
+  }
+  res.json({ added: n });
 });
 
-app.delete('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.delete('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const ids = Array.isArray(req.body && req.body.ids)
     ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
   const del = db.prepare('DELETE FROM album_items WHERE album_id = ? AND media_id = ?');
-  const run = db.transaction((list) => {
-    let n = 0;
-    for (const mid of list) n += del.run(a.id, mid).changes;
-    return n;
-  });
-  res.json({ removed: run(ids) });
+  let n = 0;
+  for (const mid of ids) n += (await del.run(a.id, mid)).changes;
+  res.json({ removed: n });
 });
 
 // Creează / rotește linkul de partajare
-app.post('/api/albums/:id/share', requireAlbumOwner, checkCsrf, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.post('/api/albums/:id/share', requireAlbumOwner, checkCsrf, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const token = crypto.randomBytes(24).toString('base64url');
-  db.prepare('UPDATE albums SET share_token = ?, share_created_at = ? WHERE id = ?')
+  await db.prepare('UPDATE albums SET share_token = ?, share_created_at = ? WHERE id = ?')
     .run(token, new Date().toISOString(), a.id);
   res.json({ token, path: `/s/${token}` });
 });
 
-app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
+  await db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
   res.json({ ok: true });
 });
 
 // Moderare comentarii (partea proprietarului)
-app.get('/api/shares/activity', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+app.get('/api/shares/activity', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT c.id, c.album_id AS albumId, a.name AS albumName, c.name, c.body, c.emoji, c.created_at AS createdAt
     FROM album_comments c JOIN albums a ON a.id = c.album_id
     WHERE a.share_token IS NOT NULL
@@ -1300,37 +1294,37 @@ app.get('/api/shares/activity', requireAuth, (req, res) => {
   res.json(rows.map((c) => ({ id: c.id, albumId: c.albumId, albumName: c.albumName, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.createdAt })));
 });
 
-app.get('/api/albums/:id/comments', requireAuth, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.get('/api/albums/:id/comments', requireAuth, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  const rows = db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at DESC').all(a.id);
+  const rows = await db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at DESC').all(a.id);
   res.json(rows.map((c) => ({ id: c.id, mediaId: c.media_id || null, name: c.name, body: c.body || '', emoji: c.emoji || null, createdAt: c.created_at })));
 });
 
-app.delete('/api/albums/:id/comments/:cid', requireAlbumOwner, checkCsrf, (req, res) => {
-  const a = getAlbum(req.params.id);
+app.delete('/api/albums/:id/comments/:cid', requireAlbumOwner, checkCsrf, async (req, res) => {
+  const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  const n = db.prepare('DELETE FROM album_comments WHERE id = ? AND album_id = ?').run(String(req.params.cid), a.id).changes;
+  const n = (await db.prepare('DELETE FROM album_comments WHERE id = ? AND album_id = ?').run(String(req.params.cid), a.id)).changes;
   res.json({ ok: true, deleted: n });
 });
 
 // Link de partajare pentru o singură poză / un singur clip
-app.post('/api/media/:id/share', requireAuth, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.post('/api/media/:id/share', requireAuth, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   let token = row.share_token;
   if (!token) {
     token = crypto.randomBytes(24).toString('base64url');
-    db.prepare('UPDATE media SET share_token = ?, share_created_at = ? WHERE id = ?')
+    await db.prepare('UPDATE media SET share_token = ?, share_created_at = ? WHERE id = ?')
       .run(token, new Date().toISOString(), row.id);
   }
   res.json({ token, path: `/p/${token}` });
 });
 
-app.delete('/api/media/:id/share', requireAuth, checkCsrf, (req, res) => {
-  const row = getRow(req.params.id);
+app.delete('/api/media/:id/share', requireAuth, checkCsrf, async (req, res) => {
+  const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
-  db.prepare('UPDATE media SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(row.id);
+  await db.prepare('UPDATE media SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(row.id);
   res.json({ ok: true });
 });
 
@@ -1342,10 +1336,10 @@ const shareLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.get('/api/s/:token', shareLimiter, (req, res) => {
-  const a = getSharedAlbum(req.params.token);
+app.get('/api/s/:token', shareLimiter, async (req, res) => {
+  const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
-  const items = mediaInAlbum(a.id);
+  const items = await mediaInAlbum(a.id);
   let coverId = null;
   if (a.cover_id && items.some((it) => it.id === a.cover_id)) coverId = a.cover_id;
   else if (items[0]) coverId = items[0].id;
@@ -1370,16 +1364,16 @@ function shareOriginOk(req) {
   try { return new URL(origin).host === req.get('host'); } catch { return false; }
 }
 
-app.get('/api/s/:token/comments', shareLimiter, (req, res) => {
-  const a = getSharedAlbum(req.params.token);
+app.get('/api/s/:token/comments', shareLimiter, async (req, res) => {
+  const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
-  const rows = db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at ASC').all(a.id);
+  const rows = await db.prepare('SELECT * FROM album_comments WHERE album_id = ? ORDER BY created_at ASC').all(a.id);
   res.set('X-Robots-Tag', 'noindex, nofollow');
   res.json({ allowComments: a.allow_comments == null ? true : !!a.allow_comments, comments: rows.map(mapComment) });
 });
 
-app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }), (req, res) => {
-  const a = getSharedAlbum(req.params.token);
+app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }), async (req, res) => {
+  const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
   if (!(a.allow_comments == null ? true : a.allow_comments)) return res.status(403).json({ error: 'comentariile sunt oprite' });
   if (!shareOriginOk(req)) return res.status(403).json({ error: 'origine invalidă' });
@@ -1392,11 +1386,11 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   if (!body && !emoji) return res.status(400).json({ error: 'mesaj gol' });
   if (mediaId) {
     if (!UUID_RE.test(mediaId)) return res.status(400).json({ error: 'poză invalidă' });
-    const inAlbum = db.prepare('SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0').get(a.id, mediaId);
+    const inAlbum = await db.prepare('SELECT 1 FROM album_items ai JOIN media m ON m.id = ai.media_id WHERE ai.album_id = ? AND ai.media_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0').get(a.id, mediaId);
     if (!inAlbum) return res.status(400).json({ error: 'poza nu e în album' });
   }
   const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
-  db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (@id,@album_id,@media_id,@name,@body,@emoji,@created_at,@ip_hash)').run(row);
+  await db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (:id,:album_id,:media_id,:name,:body,:emoji,:created_at,:ip_hash)').run(row);
   if (COMMENT_WEBHOOK) {
     const url = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
     const txt = '💬 ' + name + ' pe „' + a.name + '": ' + (body || emoji || '');
@@ -1411,18 +1405,18 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
 
 const contribUpload = multer({ dest: TMP_DIR, limits: { fileSize: Math.min(MAX_UPLOAD_MB, 512) * 1024 * 1024, files: 20 } });
 app.post('/api/s/:token/contrib', contribLimiter, contribUpload.array('files', 20), async (req, res, next) => {
-  const a = getSharedAlbum(req.params.token);
+  const a = await getSharedAlbum(req.params.token);
   if (!a) { for (const f of req.files || []) { try { fs.rmSync(f.path, { force: true }); } catch {} } return res.status(404).json({ error: 'link invalid' }); }
   if (!a.allow_contrib) { for (const f of req.files || []) { try { fs.rmSync(f.path, { force: true }); } catch {} } return res.status(403).json({ error: 'adăugarea e oprită' }); }
   if (!shareOriginOk(req)) return res.status(403).json({ error: 'origine invalidă' });
   try {
-    const ins = db.prepare('INSERT OR IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
+    const ins = db.prepare('INSERT IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
     const now = new Date().toISOString();
     let added = 0; const items = [];
     for (const file of req.files || []) {
       try {
         const r = await processUpload(file);
-        ins.run(a.id, r.id, now);
+        await ins.run(a.id, r.id, now);
         added++; items.push({ id: r.id });
       } catch (e) {
         try { fs.rmSync(file.path, { force: true }); } catch {}
@@ -1433,14 +1427,14 @@ app.post('/api/s/:token/contrib', contribLimiter, contribUpload.array('files', 2
   } catch (e) { next(e); }
 });
 
-function shareMediaGuard(req, res, next) {
-  const a = getSharedAlbum(req.params.token);
+async function shareMediaGuard(req, res, next) {
+  const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).end();
   if (!UUID_RE.test(String(req.params.id || ''))) return res.status(404).end();
-  const inAlbum = db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?')
+  const inAlbum = await db.prepare('SELECT 1 FROM album_items WHERE album_id = ? AND media_id = ?')
     .get(a.id, req.params.id);
   if (!inAlbum) return res.status(404).end();
-  const row = db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
+  const row = await db.prepare('SELECT * FROM media WHERE id = ?').get(req.params.id);
   if (!row || row.deleted_at) return res.status(404).end();
   req.mediaRow = row;
   next();
@@ -1457,7 +1451,7 @@ app.get('/s/:token/media/:id/preview', shareLimiter, shareMediaGuard, (req, res)
 const SHARE_HTML_PATH = path.join(__dirname, 'public', 'share.html');
 const htmlEsc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-app.get('/s/:token', shareLimiter, (req, res) => {
+app.get('/s/:token', shareLimiter, async (req, res) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
   res.set('Cache-Control', 'no-store');
   res.type('html');
@@ -1466,14 +1460,14 @@ app.get('/s/:token', shareLimiter, (req, res) => {
   try { html = fs.readFileSync(SHARE_HTML_PATH, 'utf8'); }
   catch { return res.status(500).end(); }
 
-  const a = getSharedAlbum(req.params.token);
+  const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).send(html.replace('<!--OG-->', ''));
 
-  const agg = db.prepare(`
+  const agg = await db.prepare(`
     SELECT COUNT(*) n FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
   `).get(a.id);
-  const cover = db.prepare(`
+  const cover = await db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
     ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
@@ -1495,8 +1489,8 @@ app.get('/s/:token', shareLimiter, (req, res) => {
 });
 
 // ─── Partajare publică: o singură poză ─────────────────────────────────────
-app.get('/api/p/:token', shareLimiter, (req, res) => {
-  const row = getSharedPhoto(req.params.token);
+app.get('/api/p/:token', shareLimiter, async (req, res) => {
+  const row = await getSharedPhoto(req.params.token);
   if (!row) return res.status(404).json({ error: 'link invalid' });
   res.set('X-Robots-Tag', 'noindex, nofollow');
   res.json({
@@ -1512,8 +1506,8 @@ app.get('/api/p/:token', shareLimiter, (req, res) => {
   });
 });
 
-function sharePhotoGuard(req, res, next) {
-  const row = getSharedPhoto(req.params.token);
+async function sharePhotoGuard(req, res, next) {
+  const row = await getSharedPhoto(req.params.token);
   if (!row) return res.status(404).end();
   req.mediaRow = row;
   next();
@@ -1521,10 +1515,10 @@ function sharePhotoGuard(req, res, next) {
 app.get('/p/:token/thumb', shareLimiter, sharePhotoGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/p/:token/full', shareLimiter, sharePhotoGuard, (req, res) => sendFull(req.mediaRow, res));
 
-app.get('/p/:token', shareLimiter, (req, res) => {
+app.get('/p/:token', shareLimiter, async (req, res) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
   res.set('Cache-Control', 'no-store');
-  const code = getSharedPhoto(req.params.token) ? 200 : 404;
+  const code = (await getSharedPhoto(req.params.token)) ? 200 : 404;
   res.status(code).sendFile(path.join(__dirname, 'public', 'photo.html'));
 });
 
@@ -1580,23 +1574,28 @@ app.use((err, req, res, next) => {
   if (!res.headersSent) res.status(500).json({ error: 'eroare server' });
 });
 
-joblog.sweep();
-purgeTrash();
-setInterval(purgeTrash, 6 * 60 * 60 * 1000).unref();
+db.ready().then(async () => {
+  await joblog.sweep();
+  await purgeTrash();
+  setInterval(() => { purgeTrash().catch((e) => console.error('purge:', e)); }, 6 * 60 * 60 * 1000).unref();
 
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
-  // în fundal: generează postere pentru clipurile fără thumbnail
-  Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
-  Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
-  Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
-  setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
-  setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
-  setTimeout(() => {
-    try { backup.checkIntegrity(ORIGINAL_DIR); } catch {}
-    backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});
-  }, 20000);
-  setInterval(() => { backup.backupNow().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
-  setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
-  setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
+    // în fundal: generează postere pentru clipurile fără thumbnail
+    Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
+    Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
+    Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
+    setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
+    setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
+    setTimeout(() => {
+      backup.checkIntegrity(ORIGINAL_DIR).catch(() => {});
+      backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});
+    }, 20000);
+    setInterval(() => { backup.backupNow().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
+    setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
+    setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
+  });
+}).catch((e) => {
+  console.error('\n  Nu m-am putut conecta la MariaDB:', e && e.message ? e.message : e);
+  process.exit(1);
 });
