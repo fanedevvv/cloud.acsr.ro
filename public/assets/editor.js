@@ -11,7 +11,7 @@
 
   const PRESETS = {
     none:   { label: 'Original', a: {} },
-    auto:   { label: 'Auto',     a: { bright: 104, contrast: 108, sat: 106 } },
+    auto:   { label: 'Auto-îmbunătățire', a: { bright: 104, contrast: 108, sat: 106 } },
     vivid:  { label: 'Vivid',    a: { contrast: 112, sat: 138 } },
     bw:     { label: 'Alb-negru', a: { sat: 0, contrast: 112 }, extra: '' },
     sepia:  { label: 'Sepia',    a: { sat: 92 }, extra: 'sepia(65%)' },
@@ -227,9 +227,39 @@
   function markAspects() {
     root.querySelectorAll('.ed-asp').forEach((b) => b.classList.toggle('on', Number(b.dataset.ar) === st.aspect));
   }
+  // Analizează poza (histogramă de luminanță pe o mostră mică) și calculează
+  // niveluri de expunere/contrast potrivite pentru EA, nu valori fixe —
+  // e o „auto-îmbunătățire" reală (auto-levels clasic), nu doar un filtru static.
+  function computeAutoLevels() {
+    const s = 96;
+    const off = document.createElement('canvas');
+    off.width = s; off.height = s;
+    const octx = off.getContext('2d');
+    octx.drawImage(img, 0, 0, s, s);
+    let data;
+    try { data = octx.getImageData(0, 0, s, s).data; } catch { return { bright: 104, contrast: 108, sat: 106 }; }
+    const hist = new Array(256).fill(0);
+    let sum = 0;
+    const total = s * s;
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      hist[lum]++;
+      sum += lum;
+    }
+    const mean = sum / total;
+    let cum = 0, p2 = 0, p98 = 255;
+    for (let v = 0; v < 256; v++) { cum += hist[v]; if (cum / total >= 0.02) { p2 = v; break; } }
+    cum = 0;
+    for (let v = 255; v >= 0; v--) { cum += hist[v]; if (cum / total >= 0.02) { p98 = v; break; } }
+    const range = Math.max(20, p98 - p2);
+    const contrast = Math.max(100, Math.min(160, Math.round((255 / range) * 100)));
+    const bright = Math.max(85, Math.min(130, Math.round(100 + (128 - mean) * 0.35)));
+    return { bright, contrast, sat: 110 };
+  }
   function applyPreset(k) {
     const p = PRESETS[k]; if (!p) return;
-    st.adj = { bright: 100, contrast: 100, sat: 100, warm: 0, ...p.a };
+    const a = k === 'auto' ? computeAutoLevels() : p.a;
+    st.adj = { bright: 100, contrast: 100, sat: 100, warm: 0, ...a };
     st.preset = k;
     syncSliders(); markFilters(); draw();
   }
