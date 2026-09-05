@@ -1194,9 +1194,14 @@ function openChooser(anchor) {
     list.appendChild(b);
   }
   const rect = anchor.getBoundingClientRect();
-  menu.style.top = rect.bottom + 6 + 'px';
-  menu.style.right = window.innerWidth - rect.right + 'px';
+  menu.style.left = '0px'; // resetează înainte de măsurare, ca offsetWidth să nu fie limitat de o poziție veche
+  menu.style.right = 'auto';
   menu.hidden = false;
+  const menuW = menu.offsetWidth;
+  // aliniază marginea dreaptă a meniului cu cea a butonului, dar fără să iasă din ecran (nici la stânga, nici la dreapta)
+  const left = Math.max(8, Math.min(rect.right - menuW, window.innerWidth - menuW - 8));
+  menu.style.top = rect.bottom + 6 + 'px';
+  menu.style.left = left + 'px';
   setTimeout(() => document.addEventListener('click', outsideChooser), 0);
 }
 function outsideChooser(e) { if (!$('chooser').contains(e.target)) closeChooser(); }
