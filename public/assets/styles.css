@@ -199,7 +199,15 @@ body {
 }
 .sel-bar #selCount { font-size: 18px; margin-left: 4px; }
 .sel-word { color: var(--text-dim); font-size: 14px; margin-left: 6px; }
-.sel-actions { display: flex; gap: 4px; }
+/* min-width:0 lasă acest flex-item să se micșoreze sub conținut, ca să
+   poată deveni scrollabil în loc să împingă butoanele din capăt (ex.
+   Șterge, ultimul adăugat) în afara ecranului pe mobil */
+.sel-actions {
+  display: flex; gap: 4px; min-width: 0;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.sel-actions::-webkit-scrollbar { display: none; }
+.sel-actions .icon-btn2 { flex: none; }
 
 /* ─── Vederi ─── */
 .view { flex: 1; }
