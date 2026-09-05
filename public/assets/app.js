@@ -2364,28 +2364,23 @@ async function uploadFiles(files) {
     return { li, fill };
   });
 
-  // Upload-uri simultane (nu unul câte unul) — pe I/O de rețea/NFS asta
-  // scurtează mult timpul total la mai multe poze deodată.
-  const CONCURRENCY = 4;
-  let ok = 0, done = 0;
-  let next = 0;
-  async function worker() {
-    while (next < files.length) {
-      const i = next++;
-      try {
-        await uploadOne(files[i], rows[i].fill);
-        rows[i].li.classList.add('ok');
-        ok++;
-      } catch (e) {
-        rows[i].li.classList.add('fail');
-        rows[i].fill.style.width = '100%';
-        rows[i].li.title = e && e.message ? e.message : 'eșuat';
-      }
-      done++;
-      $('uploadTitle').textContent = 'Se încarcă ' + done + '/' + files.length + '…';
+  // Upload secvențial (unul câte unul): pe conexiuni de telefon lățimea de
+  // bandă e limita, iar mai multe upload-uri simultane doar o împart și
+  // depășesc timeout-ul serverului (erau 408-uri). Fiecare poză primește
+  // toată banda și se termină cât de repede permite conexiunea.
+  let ok = 0;
+  for (let i = 0; i < files.length; i++) {
+    $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
+    try {
+      await uploadOne(files[i], rows[i].fill);
+      rows[i].li.classList.add('ok');
+      ok++;
+    } catch (e) {
+      rows[i].li.classList.add('fail');
+      rows[i].fill.style.width = '100%';
+      rows[i].li.title = e && e.message ? e.message : 'eșuat';
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
   $('uploadTitle').textContent = 'Gata — ' + ok + '/' + files.length + ' încărcate';
   await loadAll();
   await loadAlbums();
