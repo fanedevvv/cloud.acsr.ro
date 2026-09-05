@@ -1227,7 +1227,7 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 50 },
 });
 
-app.post('/api/upload', uploadLimiter, checkCsrf, upload.array('files', 50), async (req, res, next) => {
+app.post('/api/upload', requireAccount, uploadLimiter, checkCsrf, upload.array('files', 50), async (req, res, next) => {
   try {
     const items = [];
     for (const file of req.files || []) {
@@ -1294,7 +1294,7 @@ app.get('/media/:id/frame', requireAuth, mediaServeGuard, async (req, res) => {
   } catch { res.status(500).end(); }
 });
 
-app.post('/api/media/:id/frame', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+app.post('/api/media/:id/frame', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   const row = await getRow(req.params.id);
   if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
   if (row.locked && !(req.session && req.session.lockOpen)) return res.status(404).json({ error: 'nu există' });
@@ -1304,7 +1304,7 @@ app.post('/api/media/:id/frame', requireAuth, checkCsrf, jsonBody, async (req, r
   } catch (e) { res.status(500).json({ error: e.message || 'eroare' }); }
 });
 
-app.post('/api/media/:id/video-edit', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+app.post('/api/media/:id/video-edit', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
   const row = await getRow(req.params.id);
   if (!row || row.type !== 'video') return res.status(404).json({ error: 'nu există' });
@@ -1355,7 +1355,7 @@ app.get('/api/slideshow/:id/download', requireAuth, (req, res) => {
 });
 
 // ─── Animație -> WebP animat (util „Animation" gen Google Photos) ─────────
-app.post('/api/animation', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+app.post('/api/animation', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
   const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
     .filter((x) => UUID_RE.test(String(x))).slice(0, 12);
