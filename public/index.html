@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=57">
+  <link rel="stylesheet" href="/assets/styles.css?v=58">
 </head>
 <body>
   <div class="app">
@@ -395,6 +395,40 @@
         </div>
       </div>
       <div id="accErr" class="lock-err" hidden></div>
+
+      <div class="acc-2fa">
+        <div class="acc-2fa-head">
+          <div>
+            <strong>Autentificare în doi pași</strong>
+            <p class="muted" id="acc2faStatus">Se încarcă…</p>
+          </div>
+          <button id="acc2faToggle" class="btn ghost" type="button">Activează</button>
+        </div>
+        <div id="acc2faSetup" class="acc-2fa-setup" hidden>
+          <p class="muted">Scanează codul cu Google Authenticator / Authy, apoi introdu codul de 6 cifre pentru confirmare.</p>
+          <img id="acc2faQr" alt="Cod QR 2FA" width="180" height="180">
+          <p class="muted acc-2fa-secret">Sau introdu manual: <code id="acc2faSecret"></code></p>
+          <input id="acc2faConfirmCode" type="text" inputmode="numeric" maxlength="6" placeholder="123456">
+          <div class="modal-actions">
+            <button id="acc2faConfirm" class="btn primary" type="button">Confirmă</button>
+            <button id="acc2faCancel" class="btn" type="button">Anulează</button>
+          </div>
+        </div>
+        <div id="acc2faBackup" class="acc-2fa-setup" hidden>
+          <p class="muted">Coduri de rezervă (folosește-le dacă pierzi accesul la aplicația de autentificare — fiecare merge o singură dată). Salvează-le acum, nu se mai arată din nou.</p>
+          <div id="acc2faBackupList" class="acc-2fa-codes"></div>
+          <div class="modal-actions"><button id="acc2faBackupDone" class="btn primary" type="button">Am salvat codurile</button></div>
+        </div>
+        <div id="acc2faDisable" class="acc-2fa-setup" hidden>
+          <p class="muted">Introdu parola contului pentru a dezactiva 2FA.</p>
+          <input id="acc2faDisablePw" type="password" placeholder="Parolă" autocomplete="current-password">
+          <div class="modal-actions">
+            <button id="acc2faDisableConfirm" class="btn primary" type="button">Dezactivează</button>
+            <button id="acc2faDisableCancel" class="btn" type="button">Anulează</button>
+          </div>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <span id="accUser" class="muted"></span>
         <span><button id="accSave" class="btn primary">Salvează</button>
@@ -461,9 +495,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=57"></script>
-  <script src="/assets/veditor.js?v=57"></script>
-  <script src="/assets/app.js?v=57"></script>
-  <script src="/assets/pwa.js?v=57"></script>
+  <script src="/assets/editor.js?v=58"></script>
+  <script src="/assets/veditor.js?v=58"></script>
+  <script src="/assets/app.js?v=58"></script>
+  <script src="/assets/pwa.js?v=58"></script>
 </body>
 </html>

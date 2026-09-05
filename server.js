@@ -271,11 +271,11 @@ const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024
 
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  return (await db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId)) || null;
+  return (await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled FROM users WHERE id = ?').get(req.session.userId)) || null;
 }
 function pubUser(u) {
   if (!u) return null;
-  return { id: u.id, username: u.username, displayName: u.display_name, hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, avatar: '/api/users/' + u.id + '/avatar' };
+  return { id: u.id, username: u.username, displayName: u.display_name, hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, totpEnabled: !!u.totp_enabled, avatar: '/api/users/' + u.id + '/avatar' };
 }
 function requireAccount(req, res, next) {
   if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
@@ -413,6 +413,10 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
     let ok = false;
     try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
     if (!ok) return res.status(401).json({ error: 'utilizator sau parolă greșită' });
+    if (u.totp_enabled) {
+      req.session.pending2fa = u.id;
+      return req.session.save(() => res.json({ ok: true, need2fa: true }));
+    }
     return req.session.regenerate((err) => {
       if (err) return res.status(500).json({ error: 'eroare server' });
       req.session.authed = true;
@@ -438,6 +442,78 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
 });
 
 app.get('/api/me', async (req, res) => res.json({ user: pubUser(await currentUser(req)), role: req.session && req.session.role || 'guest' }));
+
+// ─── Autentificare în doi pași (TOTP) ──────────────────────────────────────
+const totp = require('./lib/totp');
+const twofaLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe încercări, reîncearcă mai târziu' } });
+
+app.post('/api/login/2fa', twofaLimiter, express.json({ limit: '4kb' }), async (req, res) => {
+  const uid = req.session && req.session.pending2fa;
+  if (!uid) return res.status(400).json({ error: 'nicio autentificare în curs' });
+  const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
+  if (!u || !u.totp_enabled) return res.status(400).json({ error: 'nicio autentificare în curs' });
+  const code = String((req.body && req.body.code) || '').trim();
+  let ok = totp.verifyTotp(u.totp_secret, code);
+  if (!ok) {
+    // acceptă și un cod de rezervă (o singură dată)
+    let codes = [];
+    try { codes = JSON.parse(u.totp_backup_codes || '[]'); } catch { codes = []; }
+    const norm = code.replace(/\s+/g, '').toLowerCase();
+    const idx = codes.findIndex((h) => h === crypto.createHash('sha256').update(norm).digest('hex'));
+    if (idx !== -1) {
+      ok = true;
+      codes.splice(idx, 1);
+      await db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(JSON.stringify(codes), u.id);
+    }
+  }
+  if (!ok) return res.status(401).json({ error: 'cod greșit' });
+  delete req.session.pending2fa;
+  req.session.regenerate((err) => {
+    if (err) return res.status(500).json({ error: 'eroare server' });
+    req.session.authed = true;
+    req.session.userId = u.id;
+    req.session.displayName = u.display_name;
+    req.session.role = u.is_admin ? 'admin' : 'user';
+    req.session.csrf = crypto.randomBytes(32).toString('hex');
+    req.session.save(() => res.json({ ok: true, role: req.session.role, user: pubUser(u) }));
+  });
+});
+
+app.post('/api/account/2fa/setup', requireAccount, checkCsrf, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(400).json({ error: 'niciun cont' });
+  const secret = totp.randomBase32Secret();
+  req.session.pendingTotpSecret = secret;
+  const url = totp.otpauthURL({ secret, label: u.username, issuer: 'Cloud' });
+  const qr = await QRCode.toDataURL(url, { margin: 1, width: 220 });
+  req.session.save(() => res.json({ secret, qr }));
+});
+
+app.post('/api/account/2fa/confirm', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
+  const secret = req.session && req.session.pendingTotpSecret;
+  if (!u || !secret) return res.status(400).json({ error: 'pornește mai întâi configurarea' });
+  const code = String((req.body && req.body.code) || '');
+  if (!totp.verifyTotp(secret, code)) return res.status(401).json({ error: 'cod greșit' });
+  const backup = totp.genBackupCodes();
+  const hashed = backup.map((c) => crypto.createHash('sha256').update(c).digest('hex'));
+  await db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_backup_codes = ? WHERE id = ?')
+    .run(secret, JSON.stringify(hashed), u.id);
+  delete req.session.pendingTotpSecret;
+  req.session.save(() => res.json({ ok: true, backupCodes: backup }));
+});
+
+app.post('/api/account/2fa/disable', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const cu = await currentUser(req);
+  if (!cu) return res.status(400).json({ error: 'niciun cont' });
+  const u = await db.prepare('SELECT id, pass_hash FROM users WHERE id = ?').get(cu.id);
+  const password = String((req.body && req.body.password) || '');
+  let ok = false;
+  try { ok = u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
+  await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0, totp_backup_codes = NULL WHERE id = ?').run(u.id);
+  res.json({ ok: true });
+});
 
 app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   const u = await currentUser(req);

@@ -2196,6 +2196,8 @@ function wireAccount() {
     $('accAvatar').src = me.avatar + '?t=' + Date.now();
     $('accUser').textContent = '@' + me.username;
     $('accErr').hidden = true;
+    resetAcc2fa();
+    render2faStatus();
     acc.hidden = false;
   };
   $('accClose').onclick = () => { acc.hidden = true; };
@@ -2228,6 +2230,62 @@ function wireAccount() {
       if (cur.view === 'albums') renderAlbums();
       if (cur.view === 'album') renderAlbum();
       toast('Salvat');
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
+  wire2fa();
+}
+
+function render2faStatus() {
+  $('acc2faStatus').textContent = me.totpEnabled ? 'Activată.' : 'Dezactivată — recomandat pentru un cont cu poze reale.';
+  $('acc2faToggle').textContent = me.totpEnabled ? 'Dezactivează' : 'Activează';
+}
+function resetAcc2fa() {
+  $('acc2faSetup').hidden = true;
+  $('acc2faBackup').hidden = true;
+  $('acc2faDisable').hidden = true;
+  $('acc2faConfirmCode').value = '';
+  $('acc2faDisablePw').value = '';
+}
+function wire2fa() {
+  $('acc2faToggle').onclick = async () => {
+    $('accErr').hidden = true;
+    if (me.totpEnabled) {
+      resetAcc2fa();
+      $('acc2faDisable').hidden = false;
+      return;
+    }
+    try {
+      const d = await api('/api/account/2fa/setup', { method: 'POST' });
+      resetAcc2fa();
+      $('acc2faQr').src = d.qr;
+      $('acc2faSecret').textContent = d.secret;
+      $('acc2faSetup').hidden = false;
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
+  $('acc2faCancel').onclick = () => resetAcc2fa();
+  $('acc2faConfirm').onclick = async () => {
+    const code = $('acc2faConfirmCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { $('accErr').textContent = 'Codul trebuie să aibă 6 cifre'; $('accErr').hidden = false; return; }
+    try {
+      const d = await api('/api/account/2fa/confirm', { method: 'POST', body: { code } });
+      me.totpEnabled = true;
+      render2faStatus();
+      resetAcc2fa();
+      $('acc2faBackupList').innerHTML = d.backupCodes.map((c) => '<div>' + c + '</div>').join('');
+      $('acc2faBackup').hidden = false;
+      toast('Autentificare în doi pași activată');
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
+  $('acc2faBackupDone').onclick = () => resetAcc2fa();
+  $('acc2faDisableCancel').onclick = () => resetAcc2fa();
+  $('acc2faDisableConfirm').onclick = async () => {
+    const password = $('acc2faDisablePw').value;
+    try {
+      await api('/api/account/2fa/disable', { method: 'POST', body: { password } });
+      me.totpEnabled = false;
+      render2faStatus();
+      resetAcc2fa();
+      toast('Autentificare în doi pași dezactivată');
     } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
   };
 }

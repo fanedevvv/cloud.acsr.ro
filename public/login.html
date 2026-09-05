@@ -8,7 +8,7 @@
   <script src="/assets/theme-init.js"></script>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="/assets/styles.css?v=57">
+  <link rel="stylesheet" href="/assets/styles.css?v=58">
 </head>
 <body class="login-body">
   <form id="loginForm" class="login-card" autocomplete="on">
@@ -23,10 +23,14 @@
 
     <input type="text" id="username" name="username" placeholder="Utilizator" autocomplete="username" autocapitalize="none" required>
     <input type="password" id="password" name="password" placeholder="Parolă" autocomplete="current-password" required>
+    <div id="twofaBox" class="twofa-box" hidden>
+      <p class="muted">Introdu codul din aplicația de autentificare (sau un cod de rezervă).</p>
+      <input type="text" id="twofaCode" name="twofaCode" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
+    </div>
     <button type="submit" id="submitBtn">Intră</button>
     <p id="err" class="err" role="alert" hidden></p>
-    <p class="muted login-hint">Nu ai cont? <a href="/register">Creează unul</a>. Poți lăsa utilizatorul gol și folosi parola veche de administrator.</p>
+    <p id="loginHint" class="muted login-hint">Nu ai cont? <a href="/register">Creează unul</a>. Poți lăsa utilizatorul gol și folosi parola veche de administrator.</p>
   </form>
-  <script src="/assets/login.js?v=57"></script>
+  <script src="/assets/login.js?v=58"></script>
 </body>
 </html>
