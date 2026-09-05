@@ -1020,6 +1020,11 @@ app.get('/api/places/summary', requireAuth, async (req, res) => {
   try { res.json(await geo.placesSummary()); } catch { res.json([]); }
 });
 
+const geoSearchLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe căutări, așteaptă puțin' } });
+app.get('/api/geo/search', requireAuth, geoSearchLimiter, async (req, res) => {
+  try { res.json(await geo.search(String(req.query.q || ''))); } catch { res.json([]); }
+});
+
 // „Categorii" — câte elemente în fiecare secțiune automată
 app.get('/api/categories', requireAuth, async (req, res) => {
   const live = 'deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0';
@@ -1102,7 +1107,20 @@ app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, async (req, res) =
   if ('favorite' in b) { sets.push('favorite = :favorite'); vals.favorite = b.favorite ? 1 : 0; }
   if ('archived' in b) { sets.push('archived = :archived'); vals.archived = b.archived ? 1 : 0; }
   if ('caption' in b) { sets.push('caption = :caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
+  if ('lat' in b && 'lon' in b) {
+    const lat = Number(b.lat), lon = Number(b.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      return res.status(400).json({ error: 'coordonate invalide' });
+    }
+    sets.push('lat = :lat', 'lon = :lon', 'place_done = 0');
+    vals.lat = lat; vals.lon = lon;
+  }
   if (sets.length) await db.prepare(`UPDATE media SET ${sets.join(', ')} WHERE id = :id`).run(vals);
+  if ('lat' in b && 'lon' in b) {
+    const g = await geo.reverse(vals.lat, vals.lon).catch(() => null);
+    if (g) await db.prepare('UPDATE media SET place = ?, city = ?, country = ?, place_done = 1 WHERE id = ?')
+      .run(g.place || null, g.city || null, g.country || null, row.id);
+  }
   res.json({ ok: true });
 });
 
@@ -1328,6 +1346,27 @@ app.get('/api/slideshow/:id/download', requireAuth, (req, res) => {
   const j = vedit.getJob(req.params.id);
   if (!j || j.phase !== 'done' || !j.file || !fs.existsSync(j.file)) return res.status(404).end();
   res.download(j.file, 'slideshow.mp4');
+});
+
+// ─── Animație -> WebP animat (util „Animation" gen Google Photos) ─────────
+app.post('/api/animation', requireAuth, checkCsrf, jsonBody, async (req, res) => {
+  if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+    .filter((x) => UUID_RE.test(String(x))).slice(0, 12);
+  const getStmt = db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL');
+  const rows = (await Promise.all(ids.map((id) => getStmt.get(id))))
+    .filter((r) => r && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
+  if (rows.length < 2) return res.status(400).json({ error: 'alege cel puțin 2 poze' });
+  const files = rows.map((r) => path.join(ORIGINAL_DIR, r.stored_name));
+  const j = vedit.newJob('Animație');
+  vedit.runAnimation(j, files, {}).catch((e) => console.error('animation:', e));
+  res.json({ jobId: j.id });
+});
+
+app.get('/api/animation/status/:id', requireAuth, (req, res) => {
+  const j = vedit.getJob(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job necunoscut' });
+  res.json({ id: j.id, phase: j.phase, error: j.error, mediaId: j.mediaId || null });
 });
 
 // ─── Ștergere ───────────────────────────────────────────────────────────────

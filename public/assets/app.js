@@ -1143,6 +1143,8 @@ function renderSelActions() {
       bulk((id) => api('/api/media/' + id + '/lock', { method: 'POST' }), 'Mutat în folderul blocat', (id) => api('/api/media/' + id + '/lock', { method: 'DELETE' }));
     }));
     box.appendChild(selBtn('movie', 'Slideshow video', () => openSlideshow([...selected])));
+    box.appendChild(selBtn('grid_view', 'Colaj', () => openCollage([...selected])));
+    box.appendChild(selBtn('gif_box', 'Animație', () => openAnimation([...selected])));
   }
   if (cur.view === 'album') {
     box.appendChild(selBtn('remove', 'Scoate din album', async () => {
@@ -1192,6 +1194,109 @@ async function bulk(fn, okMsg, undoFn) {
 
 // ─── Slideshow -> video ────────────────────────────────────────────────────
 let slideIds = [];
+function imageIdsOnly(ids) {
+  return (ids || []).filter((id) => {
+    const m = media.find((x) => x.id === id) || (cur.items || []).find((x) => x.id === id);
+    return m && m.type === 'image';
+  });
+}
+function loadImg(src) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = reject;
+    im.src = src;
+  });
+}
+
+// ─── Colaj ──────────────────────────────────────────────────────────────────
+async function openCollage(ids) {
+  const list = imageIdsOnly(ids).slice(0, 9);
+  if (list.length < 2) return toast('Alege cel puțin 2 poze');
+  $('collageModal').hidden = false;
+  const canvas = $('collageCanvas');
+  const ctx = canvas.getContext('2d');
+  const SIZE = 1080;
+  const cols = Math.ceil(Math.sqrt(list.length));
+  const rows = Math.ceil(list.length / cols);
+  const gap = 8;
+  canvas.width = SIZE;
+  canvas.height = Math.round(SIZE * rows / cols);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const cellW = (SIZE - gap * (cols + 1)) / cols;
+  const cellH = (canvas.height - gap * (rows + 1)) / rows;
+  const imgs = await Promise.all(list.map((id) => loadImg('/media/' + id + '/preview').catch(() => loadImg('/media/' + id + '/full'))));
+  imgs.forEach((im, i) => {
+    const r = Math.floor(i / cols), c = i % cols;
+    const x = gap + c * (cellW + gap), y = gap + r * (cellH + gap);
+    const scale = Math.max(cellW / im.width, cellH / im.height);
+    const dw = im.width * scale, dh = im.height * scale;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, cellW, cellH); ctx.clip();
+    ctx.drawImage(im, x + (cellW - dw) / 2, y + (cellH - dh) / 2, dw, dh);
+    ctx.restore();
+  });
+}
+function wireCollage() {
+  $('collageClose').onclick = () => { $('collageModal').hidden = true; };
+  $('collageSave').onclick = () => {
+    $('collageSave').disabled = true;
+    $('collageCanvas').toBlob(async (blob) => {
+      try {
+        const fd = new FormData();
+        fd.append('files', blob, 'colaj-' + Date.now() + '.jpg');
+        const r = await fetch('/api/upload', { method: 'POST', headers: { 'x-csrf-token': csrf }, body: fd });
+        const d = await r.json();
+        if (!r.ok || (d.items && d.items[0] && d.items[0].error)) throw new Error('a eșuat');
+        toast('Colaj salvat');
+        $('collageModal').hidden = true;
+        await loadAll(); rerender();
+      } catch (e) { toast(e.message || 'a eșuat'); }
+      $('collageSave').disabled = false;
+    }, 'image/jpeg', 0.9);
+  };
+}
+
+// ─── Animație (WebP animat, în buclă) ───────────────────────────────────────
+let animIds = [];
+function openAnimation(ids) {
+  animIds = imageIdsOnly(ids).slice(0, 12);
+  if (animIds.length < 2) return toast('Alege cel puțin 2 poze');
+  $('animDesc').textContent = animIds.length + ' poze, în buclă';
+  $('animProg').hidden = true;
+  $('animStart').disabled = false;
+  $('animationModal').hidden = false;
+}
+function wireAnimation() {
+  $('animClose').onclick = () => { $('animationModal').hidden = true; };
+  $('animStart').onclick = async () => {
+    $('animStart').disabled = true;
+    $('animProg').hidden = false;
+    $('animBar').style.width = '15%';
+    $('animStat').textContent = 'Se pregătește…';
+    let jobId;
+    try {
+      const d = await api('/api/animation', { method: 'POST', body: { ids: animIds } });
+      jobId = d.jobId;
+    } catch (e) { $('animStat').textContent = e.message; $('animStart').disabled = false; return; }
+    const poll = setInterval(async () => {
+      let j;
+      try { j = await api('/api/animation/status/' + jobId); } catch { clearInterval(poll); return; }
+      if (j.phase === 'processing') { $('animBar').style.width = '60%'; $('animStat').textContent = 'Se procesează…'; }
+      if (j.phase === 'done') {
+        clearInterval(poll);
+        $('animBar').style.width = '100%';
+        $('animStat').textContent = 'Gata!';
+        toast('Animație salvată în galerie');
+        $('animationModal').hidden = true;
+        await loadAll(); rerender();
+      }
+      if (j.phase === 'error') { clearInterval(poll); $('animStat').textContent = j.error || 'eroare'; $('animStart').disabled = false; }
+    }, 1200);
+  };
+}
+
 function openSlideshow(ids) {
   slideIds = (ids || []).filter((id) => {
     const m = media.find((x) => x.id === id) || (cur.items || []).find((x) => x.id === id);
@@ -2039,7 +2144,38 @@ function renderInfo() {
     L.marker([it.lat, it.lon]).addTo(infoMap);
     mp.onclick = () => { location.hash = '#/places'; };
     requestAnimationFrame(() => { if (infoMap) infoMap.invalidateSize(); });
+  } else if (isAdmin || (me && it.type)) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'info-row info-add-loc';
+    row.innerHTML = '<span class="msi">add_location_alt</span><span>Adaugă locație</span>';
+    row.onclick = () => openLocationPicker(it);
+    body.appendChild(row);
   }
+}
+
+// ─── Adaugă locație manual (pentru poze fără GPS) ──────────────────────────
+async function openLocationPicker(item) {
+  const q = prompt('Caută un loc (oraș, adresă, punct de interes):');
+  if (!q || !q.trim()) return;
+  let results = [];
+  try { results = await api('/api/geo/search?q=' + encodeURIComponent(q.trim())); } catch (e) { toast(e.message); return; }
+  if (!results.length) return toast('Niciun rezultat');
+  let pick = results[0];
+  if (results.length > 1) {
+    const list = results.map((r, i) => (i + 1) + '. ' + r.label).join('\n');
+    const idx = parseInt(prompt('Alege un rezultat (1-' + results.length + '):\n' + list, '1'), 10);
+    if (!idx || idx < 1 || idx > results.length) return;
+    pick = results[idx - 1];
+  }
+  try {
+    await api('/api/media/' + item.id, { method: 'PATCH', body: { lat: pick.lat, lon: pick.lon } });
+    item.lat = pick.lat; item.lon = pick.lon; item.hasGeo = true;
+    const local = media.find((m) => m.id === item.id);
+    if (local) { local.lat = pick.lat; local.lon = pick.lon; local.hasGeo = true; }
+    toast('Locație adăugată');
+    renderInfo();
+  } catch (e) { toast(e.message); }
 }
 
 let infoMap = null;
@@ -2775,6 +2911,8 @@ function wire() {
 
   initLightboxZoom();
   wireSlideshow();
+  wireCollage();
+  wireAnimation();
   wireAccount();
 
   // ─── Stare & backup ────────────────────────────────────────────────────

@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=66">
+  <link rel="stylesheet" href="/assets/styles.css?v=67">
 </head>
 <body>
   <div class="app">
@@ -483,6 +483,29 @@
     </div>
   </div>
 
+  <div id="collageModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Colaj</h2>
+      <div class="collage-preview"><canvas id="collageCanvas"></canvas></div>
+      <div class="modal-actions">
+        <button id="collageClose" class="btn">Anulează</button>
+        <button id="collageSave" class="btn primary">Salvează în galerie</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="animationModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Animație</h2>
+      <p class="muted" id="animDesc">Se face un clip animat (WebP) din pozele selectate, în buclă.</p>
+      <div id="animProg" class="import-prog" hidden><div class="bar"><div id="animBar" class="fill"></div></div><div id="animStat" class="muted"></div></div>
+      <div class="modal-actions">
+        <button id="animClose" class="btn">Închide</button>
+        <button id="animStart" class="btn primary">Creează</button>
+      </div>
+    </div>
+  </div>
+
   <div id="dangerModal" class="modal" hidden>
     <div class="modal-card">
       <h2 id="dangerTitle">Confirmare</h2>
@@ -537,9 +560,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=66"></script>
-  <script src="/assets/veditor.js?v=66"></script>
-  <script src="/assets/app.js?v=66"></script>
-  <script src="/assets/pwa.js?v=66"></script>
+  <script src="/assets/editor.js?v=67"></script>
+  <script src="/assets/veditor.js?v=67"></script>
+  <script src="/assets/app.js?v=67"></script>
+  <script src="/assets/pwa.js?v=67"></script>
 </body>
 </html>
