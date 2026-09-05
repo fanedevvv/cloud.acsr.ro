@@ -1263,7 +1263,35 @@ async function openShareModal(kind, id, item) {
   $('shareQrWrap').hidden = true;
   $('shareQr').removeAttribute('src');
   $('shareModal').hidden = false;
-  if (kind === 'album') renderAlbum();
+  if (kind === 'album') { renderAlbum(); loadShareSuggestions(id); }
+  else $('shareSuggest').hidden = true;
+}
+
+async function loadShareSuggestions(albumId) {
+  const box = $('shareSuggest');
+  box.hidden = true;
+  let list = [];
+  try { list = await api('/api/albums/' + albumId + '/share-suggestions'); } catch { list = []; }
+  if (!list.length) return;
+  const wrap = $('shareSuggestList');
+  wrap.textContent = '';
+  list.forEach((u) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'share-suggest-chip';
+    chip.innerHTML = '<img src="' + u.avatar + '" alt="">' + escapeHtml(u.displayName) + '<span class="msi">send</span>';
+    chip.onclick = async () => {
+      chip.disabled = true;
+      try {
+        await api('/api/albums/' + albumId + '/share/notify', { method: 'POST', body: { userId: u.id } });
+        chip.classList.add('sent');
+        chip.querySelector('.msi').textContent = 'check';
+        toast('Notificare trimisă către ' + u.displayName);
+      } catch (e) { toast(e.message); chip.disabled = false; }
+    };
+    wrap.appendChild(chip);
+  });
+  box.hidden = false;
 }
 
 async function revokeShare() {
@@ -1533,6 +1561,32 @@ async function openPeoplePick() {
     box.appendChild(b);
   }
   $('peoplePick').hidden = false;
+}
+
+async function openLinkAccount() {
+  $('personMenu').hidden = true;
+  let users = [];
+  try { users = await api('/api/users/list'); } catch {}
+  const box = $('linkAccountList');
+  box.textContent = '';
+  if (!users.length) box.innerHTML = '<p class="muted">Niciun cont înregistrat.</p>';
+  for (const u of users) {
+    const b = document.createElement('button');
+    b.className = 'pp-row';
+    b.type = 'button';
+    const on = curPerson && curPerson.linkedUserId === u.id;
+    b.innerHTML = '<img loading="lazy" src="/api/users/' + u.id + '/avatar"><span>' + escapeHtml(u.displayName) + ' · @' + escapeHtml(u.username) + '</span>' + (on ? '<span class="msi mi-check" style="opacity:1">check</span>' : '');
+    b.onclick = async () => {
+      try {
+        const d = await api('/api/people/' + cur.personId, { method: 'PATCH', body: { linkedUserId: u.id } });
+        curPerson = d.person;
+        $('linkAccountModal').hidden = true;
+        toast('Legat de ' + u.displayName);
+      } catch (e) { toast(e.message); }
+    };
+    box.appendChild(b);
+  }
+  $('linkAccountModal').hidden = false;
 }
 
 async function renamePerson() {
@@ -2892,6 +2946,7 @@ function wire() {
     document.addEventListener('click', () => { $('personMenu').hidden = true; });
     $('personCover').onclick = () => { $('personMenu').hidden = true; toast('Apasă ⌗ pe poza dorită'); };
     $('personMerge').onclick = () => openPeoplePick();
+    $('personLink').onclick = () => openLinkAccount();
     $('personDismiss').onclick = async () => {
       $('personMenu').hidden = true;
       if (!confirm('Marchezi gruparea asta ca „nu e o persoană"? Pozele rămân în galerie.')) return;
@@ -2899,6 +2954,15 @@ function wire() {
       catch (e) { toast(e.message); }
     };
     $('peoplePickClose').onclick = () => { $('peoplePick').hidden = true; };
+    $('linkAccountClose').onclick = () => { $('linkAccountModal').hidden = true; };
+    $('linkAccountNone').onclick = async () => {
+      try {
+        const d = await api('/api/people/' + cur.personId, { method: 'PATCH', body: { linkedUserId: null } });
+        curPerson = d.person;
+        $('linkAccountModal').hidden = true;
+        toast('Dezlegat');
+      } catch (e) { toast(e.message); }
+    };
   }
   let faceTimer = null;
   const stopFace = () => { if (faceTimer) { clearInterval(faceTimer); faceTimer = null; } };

@@ -842,7 +842,7 @@ app.get('/api/people', requireAuth, async (req, res) => {
 app.get('/api/people/:cid', requireAuth, async (req, res) => {
   const cid = String(req.params.cid);
   if (!UUID_RE.test(cid)) return res.status(404).json({ error: 'nu există' });
-  const cl = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
+  const cl = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
   const rawRows = await db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
@@ -871,8 +871,24 @@ app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, async (req, res)
     if (!ok) return res.status(400).json({ error: 'fața nu e a persoanei' });
     await db.prepare('UPDATE face_clusters SET cover_face_id = ? WHERE id = ?').run(fid, cid);
   }
-  const out = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId FROM face_clusters WHERE id = ?').get(cid);
+  if ('linkedUserId' in b) {
+    const uid = String(b.linkedUserId || '');
+    if (!uid) {
+      await db.prepare('UPDATE face_clusters SET linked_user_id = NULL WHERE id = ?').run(cid);
+    } else {
+      const u = await db.prepare('SELECT id FROM users WHERE id = ?').get(uid);
+      if (!u) return res.status(400).json({ error: 'cont inexistent' });
+      await db.prepare('UPDATE face_clusters SET linked_user_id = ? WHERE id = ?').run(uid, cid);
+    }
+  }
+  const out = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId FROM face_clusters WHERE id = ?').get(cid);
   res.json({ ok: true, person: out, name: out.name });
+});
+
+// Utilizatori cu care se poate lega o persoană recunoscută (pentru sugestii de partajare)
+app.get('/api/users/list', requireAuth, async (req, res) => {
+  const rows = await db.prepare('SELECT id, username, display_name FROM users ORDER BY display_name').all();
+  res.json(rows.map((u) => ({ id: u.id, username: u.username, displayName: u.display_name })));
 });
 
 // Unește persoana `cid` în persoana `into`
@@ -1407,6 +1423,39 @@ app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, async (req, re
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   await db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
+  res.json({ ok: true });
+});
+
+// Persoane recunoscute în album ale căror conturi pot fi notificate direct
+app.get('/api/albums/:id/share-suggestions', requireAlbumOwner, async (req, res) => {
+  const a = await getAlbum(req.params.id);
+  if (!a) return res.status(404).json({ error: 'nu există' });
+  const rows = await db.prepare(`
+    SELECT DISTINCT u.id, u.display_name AS displayName, u.has_avatar AS hasAvatar
+    FROM face_clusters c
+    JOIN faces f ON f.cluster_id = c.id
+    JOIN album_items ai ON ai.media_id = f.media_id
+    JOIN users u ON u.id = c.linked_user_id
+    WHERE ai.album_id = ? AND u.id != ?
+  `).all(a.id, a.owner_id || '');
+  res.json(rows.map((u) => ({ id: u.id, displayName: u.displayName, avatar: '/api/users/' + u.id + '/avatar' })));
+});
+
+app.post('/api/albums/:id/share/notify', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
+  const a = await getAlbum(req.params.id);
+  if (!a || !a.share_token) return res.status(400).json({ error: 'albumul nu e partajat' });
+  const userId = String((req.body && req.body.userId) || '');
+  const suggested = await db.prepare(`
+    SELECT 1 FROM face_clusters c JOIN faces f ON f.cluster_id = c.id JOIN album_items ai ON ai.media_id = f.media_id
+    WHERE ai.album_id = ? AND c.linked_user_id = ?
+  `).get(a.id, userId);
+  if (!suggested) return res.status(400).json({ error: 'persoana nu apare în album' });
+  const from = await currentUser(req);
+  await push.sendToUser(userId, {
+    title: (from ? from.display_name + ' ți-a' : 'Ți-au') + ' partajat albumul „' + a.name + '"',
+    body: 'Apari în pozele din acest album.',
+    url: '/s/' + a.share_token,
+  });
   res.json({ ok: true });
 });
 

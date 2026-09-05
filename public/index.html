@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=62">
+  <link rel="stylesheet" href="/assets/styles.css?v=63">
 </head>
 <body>
   <div class="app">
@@ -159,6 +159,7 @@
             <div id="personMenu" class="menu2" hidden>
               <button id="personCover" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
               <button id="personMerge" class="menu-item"><span class="msi">merge</span>Unește cu altă persoană…</button>
+              <button id="personLink" class="menu-item"><span class="msi">link</span>Leagă de un cont…</button>
               <button id="personDismiss" class="menu-item"><span class="msi">person_off</span>Nu e o persoană</button>
             </div>
           </div>
@@ -233,6 +234,10 @@
         <button id="shareCopy" class="btn primary">Copiază</button>
       </div>
       <div id="shareQrWrap" class="share-qr" hidden><img id="shareQr" alt="Cod QR" width="200" height="200"></div>
+      <div id="shareSuggest" class="share-suggest" hidden>
+        <p class="muted">Persoane recunoscute în album — trimite-le o notificare:</p>
+        <div id="shareSuggestList" class="share-suggest-list"></div>
+      </div>
       <div class="modal-actions">
         <button id="shareRevoke" class="btn ghost danger">Dezactivează linkul</button>
         <button id="shareQrBtn" class="btn ghost"><span class="msi">qr_code_2</span>Cod QR</button>
@@ -499,6 +504,18 @@
     </div>
   </div>
 
+  <div id="linkAccountModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Leagă de un cont</h2>
+      <p class="muted">Când persoana asta apare într-un album partajat, contul legat poate primi o notificare cu link-ul.</p>
+      <div id="linkAccountList" class="pp-list"></div>
+      <div class="modal-actions">
+        <button id="linkAccountNone" class="btn ghost">Dezleagă</button>
+        <button id="linkAccountClose" class="btn">Închide</button>
+      </div>
+    </div>
+  </div>
+
   <div id="peoplePick" class="modal" hidden>
     <div class="modal-card">
       <h2 id="peoplePickTitle">Unește cu…</h2>
@@ -519,9 +536,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=62"></script>
-  <script src="/assets/veditor.js?v=62"></script>
-  <script src="/assets/app.js?v=62"></script>
-  <script src="/assets/pwa.js?v=62"></script>
+  <script src="/assets/editor.js?v=63"></script>
+  <script src="/assets/veditor.js?v=63"></script>
+  <script src="/assets/app.js?v=63"></script>
+  <script src="/assets/pwa.js?v=63"></script>
 </body>
 </html>
