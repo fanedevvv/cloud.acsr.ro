@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=59">
+  <link rel="stylesheet" href="/assets/styles.css?v=60">
 </head>
 <body>
   <div class="app">
@@ -37,7 +37,16 @@
         <a class="side-link" href="#/locked" data-view="locked"><span class="msi">lock</span><span class="lbl">Folder blocat</span></a>
       </nav>
       <div class="side-storage">
-        <div class="storage-row"><span class="msi">cloud</span><span class="lbl">Stocare</span></div>
+        <div class="storage-row">
+          <svg class="storage-ring" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+            <circle class="ring-track" cx="20" cy="20" r="16"></circle>
+            <circle id="storageRingFill" class="ring-fill" cx="20" cy="20" r="16"></circle>
+          </svg>
+          <div class="storage-info">
+            <div id="storagePct" class="storage-pct">0%</div>
+            <div class="lbl">folosit</div>
+          </div>
+        </div>
         <div class="storage-bar"><div id="storageFill" class="storage-fill"></div></div>
         <div id="storageText" class="storage-text lbl"></div>
       </div>
@@ -496,9 +505,9 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
-  <script src="/assets/editor.js?v=59"></script>
-  <script src="/assets/veditor.js?v=59"></script>
-  <script src="/assets/app.js?v=59"></script>
-  <script src="/assets/pwa.js?v=59"></script>
+  <script src="/assets/editor.js?v=60"></script>
+  <script src="/assets/veditor.js?v=60"></script>
+  <script src="/assets/app.js?v=60"></script>
+  <script src="/assets/pwa.js?v=60"></script>
 </body>
 </html>
