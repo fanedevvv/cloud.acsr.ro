@@ -2602,6 +2602,16 @@ function openLbEditor() {
   });
 }
 
+function openLbScanner() {
+  const it = lbList[lbIndex];
+  if (!it || it.type === 'video' || !window.openScanner) return;
+  window.openScanner(it, async (file) => {
+    toast('Se salvează documentul scanat…');
+    await uploadFiles([file]);
+    toast('Document scanat salvat');
+  });
+}
+
 async function lbFav() {
   const it = lbList[lbIndex];
   if (!it) return;
@@ -3201,6 +3211,7 @@ function wire() {
     else if (act === 'next') { stopSlideshow(); stepLb(1); }
     else if (act === 'info') toggleInfo();
     else if (act === 'edit') openLbEditor();
+    else if (act === 'scan') openLbScanner();
     else if (act === 'fav') lbFav();
     else if (act === 'slideshow') toggleSlideshow();
     else if (act === 'share') { const it = lbList[lbIndex]; if (it) openShareModal('photo', it.id, it); }

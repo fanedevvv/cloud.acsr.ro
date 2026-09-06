@@ -1021,3 +1021,23 @@ body.selecting .chk { opacity: 1; }
 .login-hint a { color: var(--accent); }
 .twofa-box { display: flex; flex-direction: column; gap: 8px; }
 .twofa-box input { text-align: center; font-size: 20px; letter-spacing: 4px; }
+
+/* ── Scanner de documente v81 ─────────────────────────────────────────── */
+.scanner { position: fixed; inset: 0; z-index: 62; background: #0d0d0f; color: #fff;
+  display: flex; flex-direction: column; }
+.sc-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.sc-bar .sc-title { flex: 1; text-align: center; font-weight: 500; }
+.sc-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent;
+  border: 0; color: #fff; font: inherit; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+.sc-btn:hover { background: rgba(255,255,255,.12); }
+.sc-btn.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.sc-btn.primary:disabled { opacity: .5; }
+.sc-stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
+  min-height: 0; padding: 8px; }
+.sc-stage img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.sc-ovl { position: absolute; overflow: visible; touch-action: none; }
+.sc-ovl polygon { fill: rgba(80,150,255,.14); stroke: #4d9bff; stroke-width: 2; pointer-events: none; }
+.sc-ovl circle { fill: rgba(77,155,255,.9); stroke: #fff; stroke-width: 2; cursor: grab; }
+.sc-ovl circle:active { cursor: grabbing; }
+.sc-tools { display: flex; align-items: center; gap: 16px; justify-content: center; padding: 12px; flex-wrap: wrap; }
+.sc-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
