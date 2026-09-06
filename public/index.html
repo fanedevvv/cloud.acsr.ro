@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=80">
+  <link rel="stylesheet" href="/assets/styles.css?v=81">
 </head>
 <body>
   <div class="app">
@@ -33,6 +33,7 @@
         <a class="side-link" href="#/people" data-view="people"><span class="msi">groups</span><span class="lbl">Persoane</span></a>
         <a class="side-link" href="#/things" data-view="things"><span class="msi">category</span><span class="lbl">Lucruri</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
+        <a class="side-link" href="#/partner" data-view="partner" hidden><span class="msi">favorite</span><span class="lbl">Bibliotecă partajată</span></a>
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
         <a class="side-link" href="#/trash" data-view="trash"><span class="msi">delete</span><span class="lbl">Coș</span></a>
@@ -181,6 +182,8 @@
             <button id="personMenuBtn" class="icon-btn2" aria-label="Mai multe"><span class="msi">more_vert</span></button>
             <div id="personMenu" class="menu2" hidden>
               <button id="personCover" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
+              <button id="personAlbum" class="menu-item"><span class="msi">photo_album</span>Creează album cu persoana</button>
+              <button id="personReview" class="menu-item"><span class="msi">how_to_reg</span>Confirmă fețele</button>
               <button id="personMerge" class="menu-item"><span class="msi">merge</span>Unește cu altă persoană…</button>
               <button id="personLink" class="menu-item"><span class="msi">link</span>Leagă de un cont…</button>
               <button id="personPet" class="menu-item"><span class="msi">pets</span>Marchează ca animal</button>
@@ -471,6 +474,22 @@
         </div>
       </div>
 
+      <div class="acc-2fa">
+        <div class="acc-2fa-head">
+          <div>
+            <strong>Partener (bibliotecă partajată)</strong>
+            <p class="muted" id="accPartnerStatus">Vezi și pozele altui cont într-o filă separată.</p>
+          </div>
+        </div>
+        <div id="accPartnerForm" class="acc-file">
+          <input id="accPartnerUser" type="text" maxlength="60" placeholder="Utilizatorul partenerului" autocapitalize="none">
+          <button id="accPartnerLink" class="btn ghost" type="button"><span class="msi">link</span>Asociază</button>
+        </div>
+        <div id="accPartnerLinked" class="acc-file" hidden>
+          <button id="accPartnerUnlink" class="btn ghost danger" type="button"><span class="msi">link_off</span>Desfă asocierea</button>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <span id="accUser" class="muted"></span>
         <span><button id="accSave" class="btn primary">Salvează</button>
@@ -548,6 +567,19 @@
       <h2>Gestionează stocarea</h2>
       <div id="storageBody" class="storage-body"></div>
       <div class="modal-actions"><span></span><button id="storageClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
+  <div id="faceReviewModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="faceReviewTitle">Confirmă fețele</h2>
+      <p class="muted" id="faceReviewProg"></p>
+      <div class="face-review-stage"><img id="faceReviewImg" alt="" width="220" height="220"></div>
+      <div class="modal-actions">
+        <button id="faceReviewNo" class="btn ghost danger"><span class="msi">close</span>Nu e ea</button>
+        <button id="faceReviewYes" class="btn primary"><span class="msi">check</span>Da, e ea</button>
+        <button id="faceReviewClose" class="btn">Gata</button>
+      </div>
     </div>
   </div>
 
@@ -645,9 +677,9 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=80"></script>
-  <script src="/assets/veditor.js?v=80"></script>
-  <script src="/assets/app.js?v=80"></script>
-  <script src="/assets/pwa.js?v=80"></script>
+  <script src="/assets/editor.js?v=81"></script>
+  <script src="/assets/veditor.js?v=81"></script>
+  <script src="/assets/app.js?v=81"></script>
+  <script src="/assets/pwa.js?v=81"></script>
 </body>
 </html>

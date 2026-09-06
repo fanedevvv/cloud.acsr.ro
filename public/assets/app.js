@@ -1,14 +1,15 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const FLAT = ['all', 'highlights', 'archive', 'trash', 'locked'];
-const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș', locked: 'Folder blocat' };
+const FLAT = ['all', 'highlights', 'archive', 'trash', 'locked', 'partner'];
+const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș', locked: 'Folder blocat', partner: 'Bibliotecă partajată' };
 const EMPTY = {
   all: 'Nicio poză încă.',
   highlights: 'Nicio favorită. Apasă ⭐ pe o poză.',
   archive: 'Arhiva e goală.',
   trash: 'Coșul e gol.',
   locked: 'Folderul blocat e gol. Mută aici poze din selecție.',
+  partner: 'Partenerul nu are încă poze încărcate.',
 };
 // Niveluri de zoom pe grilă (ca la Google Photos): mare → confortabil → compact → mic
 const ZOOM = [
@@ -23,6 +24,7 @@ const ZOOM_LABEL = ['Mare', 'Confortabil', 'Compact', 'Mic', 'An'];
 let csrf = '';
 let media = [];
 let archiveList = [];
+let partnerList = [];
 let trashList = [];
 let lockedList = [];
 let lockOpen = false;
@@ -113,6 +115,7 @@ async function loadAll() {
   try { collections = await api('/api/memories/collections'); } catch { collections = []; }
 }
 async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
+async function loadPartner() { partnerList = await api('/api/media?filter=partner'); }
 async function loadTrash() { trashList = await api('/api/media?filter=trash'); }
 async function loadAlbums() { albums = await api('/api/albums'); }
 async function loadAlbum(id) {
@@ -270,6 +273,9 @@ function route() {
     cur.view = 'highlights'; showView(); renderGrid();
   } else if (h === '/archive') {
     cur.view = 'archive'; showView(); loadArchive().then(renderGrid);
+  } else if (h === '/partner') {
+    if (!(me && me.partner)) { location.hash = '#/'; return; }
+    cur.view = 'partner'; showView(); loadPartner().then(renderGrid);
   } else if (h === '/trash') {
     if (!isAdmin) { location.hash = '#/'; return; }
     cur.view = 'trash'; showView(); loadTrash().then(renderGrid);
@@ -293,6 +299,8 @@ function showView() {
 }
 
 function updateNav() {
+  const pl = document.querySelector('.side-link[data-view="partner"]');
+  if (pl) pl.hidden = !(me && me.partner);
   document.querySelectorAll('.side-link').forEach((a) => {
     const v = a.dataset.view;
     const on = v === cur.view || (v === 'albums' && cur.view === 'album');
@@ -587,6 +595,7 @@ function gridData() {
   let base;
   if (cur.view === 'highlights') base = media.filter((m) => m.favorite);
   else if (cur.view === 'archive') base = archiveList;
+  else if (cur.view === 'partner') base = partnerList;
   else base = media;
   return applyFilters(applySearch(base));
 }
@@ -1900,6 +1909,43 @@ function decoratePersonTiles() {
   });
 }
 
+// ─── Confirmă fețele unei persoane ─────────────────────────────────────────
+let faceReviewList = [];
+let faceReviewIdx = 0;
+async function openFaceReview() {
+  try {
+    const d = await api('/api/people/' + cur.personId + '/faces');
+    faceReviewList = d.faces || [];
+  } catch (e) { return toast(e.message); }
+  if (!faceReviewList.length) return toast('Nicio față de verificat');
+  faceReviewIdx = 0;
+  $('faceReviewTitle').textContent = 'E ' + ((curPerson && curPerson.name) || 'persoana') + ' aici?';
+  $('faceReviewModal').hidden = false;
+  showFaceReview();
+}
+function showFaceReview() {
+  if (faceReviewIdx >= faceReviewList.length) {
+    $('faceReviewModal').hidden = true;
+    toast('Gata — verificate toate');
+    renderPerson();
+    return;
+  }
+  const f = faceReviewList[faceReviewIdx];
+  $('faceReviewProg').textContent = (faceReviewIdx + 1) + ' din ' + faceReviewList.length;
+  $('faceReviewImg').src = '/api/faces/' + f.faceId + '/crop';
+}
+function wireFaceReview() {
+  const next = () => { faceReviewIdx++; showFaceReview(); };
+  $('faceReviewYes').onclick = next;
+  $('faceReviewClose').onclick = () => { $('faceReviewModal').hidden = true; renderPerson(); };
+  $('faceReviewNo').onclick = async () => {
+    const f = faceReviewList[faceReviewIdx];
+    if (!f) return next();
+    try { await api('/api/faces/' + f.faceId + '/detach', { method: 'POST' }); } catch (e) { toast(e.message); }
+    next();
+  };
+}
+
 async function openPeoplePick() {
   $('personMenu').hidden = true;
   let list = [];
@@ -2802,9 +2848,29 @@ function wireAccount() {
     $('accErr').hidden = true;
     resetAcc2fa();
     render2faStatus();
+    renderPartner();
     acc.hidden = false;
   };
   $('accClose').onclick = () => { acc.hidden = true; };
+  if ($('accPartnerLink')) $('accPartnerLink').onclick = async () => {
+    const uname = $('accPartnerUser').value.trim();
+    if (!uname) return;
+    try {
+      const d = await api('/api/account/partner', { method: 'POST', body: { username: uname } });
+      me.partner = d.partner; me.partnerId = d.partner && d.partner.id;
+      $('accPartnerUser').value = '';
+      renderPartner(); updateNav();
+      toast('Asociat cu ' + (d.partner.displayName || d.partner.username));
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
+  if ($('accPartnerUnlink')) $('accPartnerUnlink').onclick = async () => {
+    try {
+      await api('/api/account/partner', { method: 'DELETE' });
+      me.partner = null; me.partnerId = null;
+      renderPartner(); updateNav();
+      toast('Asociere desfăcută');
+    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
+  };
   $('accAvatarBtn').onclick = () => $('accAvatarInput').click();
   $('accAvatarInput').addEventListener('change', async () => {
     const file = $('accAvatarInput').files[0];
@@ -2837,6 +2903,16 @@ function wireAccount() {
     } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
   };
   wire2fa();
+}
+
+function renderPartner() {
+  if (!$('accPartnerForm')) return;
+  const p = me && me.partner;
+  $('accPartnerForm').hidden = !!p;
+  $('accPartnerLinked').hidden = !p;
+  $('accPartnerStatus').textContent = p
+    ? 'Asociat cu ' + (p.displayName || p.username) + ' (@' + p.username + '). Vezi pozele lui în „Bibliotecă partajată".'
+    : 'Vezi și pozele altui cont într-o filă separată.';
 }
 
 function render2faStatus() {
@@ -3243,6 +3319,7 @@ function wire() {
   wireCollage();
   wireAnimation();
   wireMetaEdit();
+  wireFaceReview();
   wireAccount();
 
   // ─── Stare & backup ────────────────────────────────────────────────────
@@ -3470,6 +3547,16 @@ function wire() {
     $('personCover').onclick = () => { $('personMenu').hidden = true; toast('Apasă ⌗ pe poza dorită'); };
     $('personMerge').onclick = () => openPeoplePick();
     $('personLink').onclick = () => openLinkAccount();
+    if ($('personAlbum')) $('personAlbum').onclick = async () => {
+      $('personMenu').hidden = true;
+      try {
+        const a = await api('/api/people/' + cur.personId + '/album', { method: 'POST', body: {} });
+        await loadAlbums();
+        toast('Album creat: ' + a.name);
+        location.hash = '#/album/' + a.id;
+      } catch (e) { toast(e.message); }
+    };
+    if ($('personReview')) $('personReview').onclick = () => { $('personMenu').hidden = true; openFaceReview(); };
     $('personPet').onclick = async () => {
       $('personMenu').hidden = true;
       try {

@@ -172,7 +172,41 @@ async function mediaInAlbum(albumId) {
   return rows.map(mapRow);
 }
 
+// Media care conține fețe dintr-un cluster (pt. albume auto de persoană)
+async function mediaForCluster(clusterId) {
+  const rows = await db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media m
+    WHERE m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
+      AND m.id IN (SELECT DISTINCT media_id FROM faces WHERE cluster_id = ?)
+    ORDER BY COALESCE(m.taken_at, m.created_at) DESC, m.created_at DESC
+  `).all(clusterId);
+  return rows.map(mapRow);
+}
+async function albumItems(a) {
+  return a.auto_person_cluster_id ? mediaForCluster(a.auto_person_cluster_id) : mediaInAlbum(a.id);
+}
+
 async function albumSummary(a) {
+  if (a.auto_person_cluster_id) {
+    const items = await mediaForCluster(a.auto_person_cluster_id);
+    const dates = items.map((m) => m.takenAt || m.createdAt).filter(Boolean).sort();
+    return {
+      id: a.id, name: a.name, createdAt: a.created_at,
+      count: items.length,
+      firstAt: dates[0] || null, lastAt: dates[dates.length - 1] || null,
+      coverId: (a.cover_id && items.some((m) => m.id === a.cover_id)) ? a.cover_id : (items[0] ? items[0].id : null),
+      shareToken: a.share_token || null,
+      shareExpiresAt: a.share_expires_at || null,
+      allowComments: a.allow_comments == null ? true : !!a.allow_comments,
+      allowContrib: false,
+      autoPersonClusterId: a.auto_person_cluster_id,
+      owner: {
+        id: a.owner_id || null,
+        name: a.owner_name || 'Vizitator',
+        avatar: a.owner_id ? '/api/users/' + a.owner_id + '/avatar' : null,
+      },
+    };
+  }
   const agg = await db.prepare(`
     SELECT COUNT(*) n,
            MIN(COALESCE(m.taken_at, m.created_at)) firstAt,
@@ -207,6 +241,7 @@ async function albumSummary(a) {
     shareExpiresAt: a.share_expires_at || null,
     allowComments: a.allow_comments == null ? true : !!a.allow_comments,
     allowContrib: !!a.allow_contrib,
+    autoPersonClusterId: null,
     owner: {
       id: a.owner_id || null,
       name: a.owner_name || 'Vizitator',
@@ -277,7 +312,7 @@ const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024
 
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled FROM users WHERE id = ?').get(req.session.userId);
+  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled, partner_id FROM users WHERE id = ?').get(req.session.userId);
   if (!u) return null;
   u.own_uploads = u.is_admin ? 1 : (await db.prepare('SELECT 1 v FROM media WHERE uploader_id = ? AND deleted_at IS NULL LIMIT 1').get(u.id)) ? 1 : 0;
   return u;
@@ -288,8 +323,19 @@ function pubUser(u) {
     id: u.id, username: u.username, displayName: u.display_name,
     hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, totpEnabled: !!u.totp_enabled,
     canMakeAlbum: !!(u.is_admin || u.own_uploads),
+    partnerId: u.partner_id || null,
     avatar: '/api/users/' + u.id + '/avatar',
   };
+}
+async function pubUserFull(req) {
+  const u = await currentUser(req);
+  if (!u) return null;
+  const out = pubUser(u);
+  if (u.partner_id) {
+    const p = await db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(u.partner_id);
+    out.partner = p ? { id: p.id, username: p.username, displayName: p.display_name } : null;
+  } else out.partner = null;
+  return out;
 }
 function requireAccount(req, res, next) {
   if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
@@ -461,7 +507,7 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   });
 });
 
-app.get('/api/me', async (req, res) => res.json({ user: pubUser(await currentUser(req)), role: req.session && req.session.role || 'guest' }));
+app.get('/api/me', async (req, res) => res.json({ user: await pubUserFull(req), role: req.session && req.session.role || 'guest' }));
 
 // ─── Autentificare în doi pași (TOTP) ──────────────────────────────────────
 const totp = require('./lib/totp');
@@ -544,6 +590,28 @@ app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) 
   await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
   req.session.displayName = name;
   res.json({ ok: true, user: pubUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+});
+
+// ─── Partener (bibliotecă partajată) ──────────────────────────────────────
+app.post('/api/account/partner', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(400).json({ error: 'niciun cont' });
+  const uname = String((req.body && req.body.username) || '').trim().toLowerCase();
+  if (!uname) return res.status(400).json({ error: 'scrie utilizatorul partenerului' });
+  const other = await db.prepare('SELECT id, username, display_name FROM users WHERE LOWER(username) = ?').get(uname);
+  if (!other) return res.status(404).json({ error: 'nu există un cont cu acest utilizator' });
+  if (other.id === u.id) return res.status(400).json({ error: 'nu te poți asocia cu tine' });
+  // rupem eventualele asocieri vechi ale ambilor, apoi legăm reciproc
+  await db.prepare('UPDATE users SET partner_id = NULL WHERE partner_id IN (?, ?)').run(u.id, other.id);
+  await db.prepare('UPDATE users SET partner_id = ? WHERE id = ?').run(other.id, u.id);
+  await db.prepare('UPDATE users SET partner_id = ? WHERE id = ?').run(u.id, other.id);
+  res.json({ ok: true, partner: { id: other.id, username: other.username, displayName: other.display_name } });
+});
+app.delete('/api/account/partner', requireAccount, checkCsrf, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(400).json({ error: 'niciun cont' });
+  if (u.partner_id) await db.prepare('UPDATE users SET partner_id = NULL WHERE id IN (?, ?)').run(u.id, u.partner_id);
+  res.json({ ok: true });
 });
 
 app.post('/api/account/avatar', requireAccount, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
@@ -958,6 +1026,52 @@ app.post('/api/people/:cid/remove', requireAuth, checkCsrf, jsonBody, async (req
   res.json({ ok: true });
 });
 
+// Toate fețele unei persoane, pentru fluxul „confirmă fețele"
+app.get('/api/people/:cid/faces', requireAuth, async (req, res) => {
+  const cid = String(req.params.cid);
+  const cl = await db.prepare('SELECT id, name FROM face_clusters WHERE id = ?').get(cid);
+  if (!cl) return res.status(404).json({ error: 'nu există' });
+  const rows = await db.prepare(`
+    SELECT f.id AS faceId, f.media_id AS mediaId
+    FROM faces f JOIN media m ON m.id = f.media_id
+    WHERE f.cluster_id = ? AND m.deleted_at IS NULL AND m.locked = 0
+    ORDER BY f.score ASC
+  `).all(cid);
+  res.json({ name: cl.name || null, faces: rows });
+});
+
+// Detașează o singură față dintr-o persoană („nu e ea aici")
+app.post('/api/faces/:fid/detach', requireAuth, checkCsrf, async (req, res) => {
+  const fid = String(req.params.fid);
+  const f = await db.prepare('SELECT id, cluster_id FROM faces WHERE id = ?').get(fid);
+  if (!f) return res.status(404).json({ error: 'nu există' });
+  const cid = f.cluster_id;
+  await db.prepare('UPDATE faces SET cluster_id = NULL WHERE id = ?').run(fid);
+  if (cid) {
+    const n = (await db.prepare('SELECT COUNT(*) c FROM faces WHERE cluster_id = ?').get(cid)).c;
+    if (n <= 0) await db.prepare('DELETE FROM face_clusters WHERE id = ?').run(cid);
+    else await db.prepare('UPDATE face_clusters SET n = ? WHERE id = ?').run(n, cid);
+  }
+  res.json({ ok: true });
+});
+
+// Creează un album automat pentru o persoană (se completează singur din fețe)
+app.post('/api/people/:cid/album', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const cid = String(req.params.cid);
+  const cl = await db.prepare('SELECT id, name FROM face_clusters WHERE id = ?').get(cid);
+  if (!cl) return res.status(404).json({ error: 'nu există' });
+  const u = await currentUser(req);
+  if (u && !u.own_uploads) return res.status(403).json({ error: 'poți face un album doar după ce încarci propriile poze' });
+  const existing = await db.prepare('SELECT * FROM albums WHERE auto_person_cluster_id = ?').get(cid);
+  if (existing) return res.json(await albumSummary(existing));
+  const id = crypto.randomUUID();
+  const nm = (cl.name && cl.name.trim()) ? cl.name.trim() : 'Persoană';
+  await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name, auto_person_cluster_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, nm, new Date().toISOString(), u ? u.id : null,
+         u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'), cid);
+  res.json(await albumSummary(await getAlbum(id)));
+});
+
 app.delete('/api/people/:cid', requireAuth, checkCsrf, async (req, res) => {
   // „nu e o persoană" — ascunde clusterul (îl golim de fețe, rămâne inert)
   const cid = String(req.params.cid);
@@ -1034,6 +1148,13 @@ app.get('/api/media', requireAuth, async (req, res) => {
   else if (f === 'screenshots') where = live + " AND kind_auto = 'screenshot'";
   else if (f === 'selfies') where = live + " AND kind_auto = 'selfie'";
   else if (f === 'geo') where = live + ' AND lat IS NOT NULL';
+  else if (f === 'partner') {
+    const cu = await currentUser(req);
+    const pid = cu && cu.partner_id;
+    if (!pid) return res.json([]);
+    const rows = await db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${live} AND uploader_id = ? ${order}`).all(pid);
+    return res.json(rows.map(mapRow));
+  }
   else where = live;
 
   const rows = await db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
@@ -1593,7 +1714,7 @@ async function requireAlbumRealOwner(req, res, next) {
 app.get('/api/albums/:id', requireAuth, async (req, res) => {
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
-  res.json({ album: await albumSummary(a), items: await mediaInAlbum(a.id) });
+  res.json({ album: await albumSummary(a), items: await albumItems(a) });
 });
 
 app.patch('/api/albums/:id', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
@@ -1630,6 +1751,7 @@ app.delete('/api/albums/:id', requireAlbumOwner, checkCsrf, async (req, res) => 
 app.post('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
+  if (a.auto_person_cluster_id) return res.status(400).json({ error: 'album automat — se completează singur' });
   const ids = Array.isArray(req.body && req.body.ids)
     ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
   const ins = db.prepare('INSERT IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
@@ -1646,6 +1768,7 @@ app.post('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, async 
 app.delete('/api/albums/:id/items', requireAlbumOwner, checkCsrf, jsonBody, async (req, res) => {
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
+  if (a.auto_person_cluster_id) return res.status(400).json({ error: 'album automat — se completează singur' });
   const ids = Array.isArray(req.body && req.body.ids)
     ? req.body.ids.filter((x) => UUID_RE.test(String(x))) : [];
   const del = db.prepare('DELETE FROM album_items WHERE album_id = ? AND media_id = ?');
@@ -1788,7 +1911,7 @@ const shareLimiter = rateLimit({
 app.get('/api/s/:token', shareLimiter, async (req, res) => {
   const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
-  const items = await mediaInAlbum(a.id);
+  const items = await albumItems(a);
   let coverId = null;
   if (a.cover_id && items.some((it) => it.id === a.cover_id)) coverId = a.cover_id;
   else if (items[0]) coverId = items[0].id;
