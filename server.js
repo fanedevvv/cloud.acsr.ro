@@ -1281,6 +1281,36 @@ app.get('/api/download', requireAuth, async (req, res) => {
   archive.finalize();
 });
 
+// ─── Export PDF al pozelor selectate ───────────────────────────────────────
+const pdfLib = require('./lib/pdf');
+app.get('/api/export/pdf', requireAuth, async (req, res) => {
+  const ids = String(req.query.ids || '')
+    .split(',').map((x) => x.trim()).filter((x) => UUID_RE.test(x)).slice(0, 60);
+  if (!ids.length) return res.status(400).json({ error: 'nimic de exportat' });
+  const getStmt = db.prepare('SELECT * FROM media WHERE id = ?');
+  const rows = (await Promise.all(ids.map((id) => getStmt.get(id))))
+    .filter((r) => r && !r.deleted_at && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
+  if (!rows.length) return res.status(404).json({ error: 'nicio poză' });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = ids.map((id) => byId.get(id)).filter(Boolean);
+  try {
+    const items = [];
+    for (const r of ordered) {
+      const pv = path.join(THUMB_DIR, r.id + '.preview.webp');
+      const src = fs.existsSync(pv) ? pv : path.join(ORIGINAL_DIR, r.stored_name);
+      if (!fs.existsSync(src)) continue;
+      items.push({ buf: fs.readFileSync(src), caption: r.caption || r.original_name || '' });
+    }
+    const pdf = await pdfLib.buildPdf(items);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', 'attachment; filename="cloud-poze.pdf"');
+    res.send(pdf);
+  } catch (e) {
+    console.error('pdf:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'eroare PDF' });
+  }
+});
+
 // Cod QR pentru un link (SVG). Doar pentru linkurile proprii de partajare.
 app.get('/qr', requireAuth, async (req, res) => {
   const data = String(req.query.data || '');
@@ -1440,21 +1470,31 @@ app.get('/api/video-edit/status/:id', requireAuth, (req, res) => {
 });
 
 // ─── Slideshow -> mp4 ────────────────────────────────────────────────────
-app.post('/api/slideshow', requireAuth, checkCsrf, jsonBody, async (req, res) => {
-  if (!vedit.available) return res.status(501).json({ error: 'ffmpeg indisponibil' });
-  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
-    .filter((x) => UUID_RE.test(String(x))).slice(0, 80);
+const slideshowUpload = multer({ dest: UPLOAD_TMP_DIR, limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+app.post('/api/slideshow', requireAuth, checkCsrf, slideshowUpload.single('music'), async (req, res) => {
+  const cleanupMusic = () => { if (req.file) { try { fs.rmSync(req.file.path, { force: true }); } catch {} } };
+  if (!vedit.available) { cleanupMusic(); return res.status(501).json({ error: 'ffmpeg indisponibil' }); }
+  let rawIds = (req.body && req.body.ids) || [];
+  if (typeof rawIds === 'string') { try { rawIds = JSON.parse(rawIds); } catch { rawIds = rawIds.split(','); } }
+  const ids = (Array.isArray(rawIds) ? rawIds : []).map((x) => String(x).trim())
+    .filter((x) => UUID_RE.test(x)).slice(0, 80);
   const getStmt = db.prepare('SELECT id, type, stored_name, locked FROM media WHERE id = ? AND deleted_at IS NULL');
   const rows = (await Promise.all(ids.map((id) => getStmt.get(id))))
     .filter((r) => r && r.type === 'image' && (!r.locked || (req.session && req.session.lockOpen)));
-  if (rows.length < 2) return res.status(400).json({ error: 'alege cel puțin 2 poze' });
-  const files = rows.map((r) => {
+  if (rows.length < 2) { cleanupMusic(); return res.status(400).json({ error: 'alege cel puțin 2 poze' }); }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const files = ids.map((id) => byId.get(id)).filter(Boolean).map((r) => {
     const pv = path.join(THUMB_DIR, r.id + '.preview.webp');
     return fs.existsSync(pv) ? pv : path.join(ORIGINAL_DIR, r.stored_name);
   });
   const j = vedit.newJob('Slideshow');
-  vedit.runSlideshow(j, files, { seconds: req.body.seconds, kenburns: req.body.kenburns })
-    .catch((e) => console.error('slideshow:', e));
+  const audioPath = req.file ? req.file.path : null;
+  vedit.runSlideshow(j, files, {
+    seconds: Number(req.body && req.body.seconds) || undefined,
+    kenburns: !(req.body && req.body.kenburns === 'false'),
+    audioPath,
+  }).catch((e) => console.error('slideshow:', e))
+    .finally(() => { if (audioPath) { try { fs.rmSync(audioPath, { force: true }); } catch {} } });
   res.json({ jobId: j.id });
 });
 

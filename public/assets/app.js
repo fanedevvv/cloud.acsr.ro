@@ -91,7 +91,9 @@ async function api(path, opts = {}) {
   const o = Object.assign({ headers: {} }, opts);
   if (o.method && o.method !== 'GET') {
     o.headers['x-csrf-token'] = csrf;
-    if (o.body && typeof o.body === 'object') {
+    if (o.body instanceof FormData) {
+      // multipart: lasă browserul să pună boundary-ul
+    } else if (o.body && typeof o.body === 'object') {
       o.headers['Content-Type'] = 'application/json';
       o.body = JSON.stringify(o.body);
     }
@@ -1256,6 +1258,12 @@ function renderSelActions() {
     box.appendChild(selBtn('grid_view', 'Colaj', () => openCollage([...selected])));
     box.appendChild(selBtn('gif_box', 'Animație', () => openAnimation([...selected])));
     box.appendChild(selBtn('edit_calendar', 'Editează data/info', () => openMetaEdit([...selected])));
+    box.appendChild(selBtn('picture_as_pdf', 'Export PDF', () => {
+      const imgs = imageIdsOnly([...selected]);
+      if (!imgs.length) return toast('Selectează cel puțin o poză');
+      toast('Se pregătește PDF-ul…');
+      location.href = '/api/export/pdf?ids=' + imgs.join(',');
+    }));
   }
   if (cur.view === 'album') {
     box.appendChild(selBtn('remove', 'Scoate din album', async () => {
@@ -1464,6 +1472,7 @@ function openSlideshow(ids) {
   $('slideDesc').textContent = slideIds.length + ' poze';
   $('slideProg').hidden = true;
   $('slideDl').hidden = true;
+  if ($('slideMusic')) $('slideMusic').value = '';
   $('slideStart').disabled = slideIds.length < 2;
   $('slideModal').hidden = false;
 }
@@ -1477,9 +1486,13 @@ function wireSlideshow() {
     $('slideStat').textContent = 'Se pregătește…';
     let jobId;
     try {
-      const d = await api('/api/slideshow', { method: 'POST', body: {
-        ids: slideIds, kenburns: $('slideKB').checked, seconds: Number($('slideSecs').value),
-      } });
+      const fd = new FormData();
+      fd.append('ids', JSON.stringify(slideIds));
+      fd.append('kenburns', $('slideKB').checked ? 'true' : 'false');
+      fd.append('seconds', String(Number($('slideSecs').value)));
+      const mf = $('slideMusic').files && $('slideMusic').files[0];
+      if (mf) fd.append('music', mf);
+      const d = await api('/api/slideshow', { method: 'POST', body: fd });
       jobId = d.jobId;
     } catch (e) { $('slideStat').textContent = e.message; $('slideStart').disabled = false; return; }
     const poll = setInterval(async () => {
