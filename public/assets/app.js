@@ -124,6 +124,29 @@ async function loadStats() {
   try { stats = await api('/api/stats'); } catch { stats = null; }
   updateStorage();
 }
+async function openStorageModal() {
+  const body = $('storageBody');
+  body.innerHTML = '<p class="muted">Se calculează…</p>';
+  $('storageModal').hidden = false;
+  let d;
+  try { d = await api('/api/storage'); } catch (e) { body.innerHTML = '<p class="muted">' + e.message + '</p>'; return; }
+  const photo = (d.byType.find((x) => x.type === 'image') || { n: 0, bytes: 0 });
+  const video = (d.byType.find((x) => x.type === 'video') || { n: 0, bytes: 0 });
+  const total = d.totalBytes || (photo.bytes + video.bytes + d.trash.bytes) || 1;
+  const seg = (b) => Math.max(0, (b / total) * 100) + '%';
+  body.innerHTML =
+    '<div class="storage-bar-big">' +
+      '<span class="storage-seg-photo" style="width:' + seg(photo.bytes) + '"></span>' +
+      '<span class="storage-seg-video" style="width:' + seg(video.bytes) + '"></span>' +
+      '<span class="storage-seg-trash" style="width:' + seg(d.trash.bytes) + '"></span>' +
+    '</div>' +
+    '<div class="storage-legend">' +
+      '<div class="row"><span class="dot storage-seg-photo"></span>Foto (' + photo.n + ')<span class="val">' + fmtBytes(photo.bytes) + '</span></div>' +
+      '<div class="row"><span class="dot storage-seg-video"></span>Video (' + video.n + ')<span class="val">' + fmtBytes(video.bytes) + '</span></div>' +
+      '<div class="row"><span class="dot storage-seg-trash"></span>Coș (' + d.trash.n + ')<span class="val">' + fmtBytes(d.trash.bytes) + '</span></div>' +
+      '<div class="row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px"><strong>Total folosit</strong><span class="val">' + fmtBytes(d.usedBytes) + (d.totalBytes ? ' din ' + fmtBytes(d.totalBytes) : '') + '</span></div>' +
+    '</div>';
+}
 function updateStorage() {
   if (!$('storageText')) return;
   const used = stats ? stats.usedBytes : media.reduce((s, m) => s + (m.size || 0), 0);
@@ -1616,7 +1639,7 @@ async function renderPeople() {
   $('peopleGrid').hidden = false;
   $('peopleTitle').textContent = 'Persoane';
   let list = [];
-  try { list = await api('/api/people'); } catch { list = []; }
+  try { list = await api('/api/people' + (peopleShowHidden ? '?hidden=1' : '')); } catch { list = []; }
   const grid = $('peopleGrid');
   grid.textContent = '';
   $('peopleEmpty').hidden = list.length > 0;
@@ -1631,13 +1654,26 @@ async function renderPeople() {
     nm.className = 'person-name';
     nm.textContent = p.name || 'Fără nume';
     if (!p.name) nm.classList.add('unnamed');
+    if (p.isPet) nm.textContent = '🐾 ' + nm.textContent;
     const cnt = document.createElement('div');
     cnt.className = 'person-count muted';
     cnt.textContent = p.n + (p.n === 1 ? ' poză' : ' poze');
     a.appendChild(img); a.appendChild(nm); a.appendChild(cnt);
     grid.appendChild(a);
   }
+  let hiddenLink = $('peopleShowHidden');
+  if (!hiddenLink) {
+    hiddenLink = document.createElement('button');
+    hiddenLink.id = 'peopleShowHidden';
+    hiddenLink.className = 'btn ghost';
+    hiddenLink.style.margin = '12px auto';
+    hiddenLink.style.display = 'block';
+    grid.parentElement.appendChild(hiddenLink);
+  }
+  hiddenLink.textContent = peopleShowHidden ? 'Ascunde persoanele ascunse' : 'Arată persoanele ascunse';
+  hiddenLink.onclick = () => { peopleShowHidden = !peopleShowHidden; renderPeople(); };
 }
+let peopleShowHidden = false;
 
 let curPerson = null;
 async function renderPerson() {
@@ -1652,7 +1688,10 @@ async function renderPerson() {
   try { d = await api('/api/people/' + cur.personId); } catch { location.hash = '#/people'; return; }
   curPerson = d.person;
   cur.items = d.items;
-  $('peopleTitle').textContent = d.person.name || 'Fără nume';
+  $('peopleTitle').textContent = (d.person.isPet ? '🐾 ' : '') + (d.person.name || 'Fără nume');
+  if ($('personPet')) $('personPet').innerHTML = d.person.isPet
+    ? '<span class="msi">person</span>Marchează ca persoană'
+    : '<span class="msi">pets</span>Marchează ca animal';
   buildGallery($('personGrid'), d.items, { flat: true });
   decoratePersonTiles();
 }
@@ -2127,6 +2166,16 @@ function renderInfo() {
       const r = document.createElement('div'); r.className = 'info-row';
       r.innerHTML = '<span class="msi">link</span><span>Partajată printr-un link</span>';
       ctxWrap.appendChild(r);
+    }
+    if (c.ocrText && c.ocrText.trim()) {
+      const r = document.createElement('div'); r.className = 'info-row info-ocr';
+      r.innerHTML = '<span class="msi">text_fields</span>';
+      const box = document.createElement('span');
+      const pre = document.createElement('div'); pre.className = 'info-ocr-text'; pre.textContent = c.ocrText.trim();
+      const btn = document.createElement('button'); btn.className = 'info-link'; btn.textContent = 'Copiază textul';
+      btn.onclick = async () => { try { await navigator.clipboard.writeText(c.ocrText.trim()); toast('Text copiat'); } catch { toast('Nu am putut copia'); } };
+      box.appendChild(pre); box.appendChild(btn);
+      r.appendChild(box); ctxWrap.appendChild(r);
     }
   }).catch(() => {});
 
@@ -3007,6 +3056,11 @@ function wire() {
   }
   $('healthBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = true; $('healthModal').hidden = false; loadHealth(); };
   $('healthClose').onclick = () => { $('healthModal').hidden = true; };
+
+  // ─── Gestionează stocarea ────────────────────────────────────────────────
+  const sideStorageEl = document.querySelector('.side-storage');
+  if (sideStorageEl) sideStorageEl.onclick = () => openStorageModal();
+  $('storageClose').onclick = () => { $('storageModal').hidden = true; };
   $('healthBackup').onclick = async () => {
     $('healthBackup').disabled = true;
     try { await api('/api/admin/backup', { method: 'POST' }); toast('Backup făcut'); await loadHealth(); }
@@ -3196,6 +3250,23 @@ function wire() {
     $('personCover').onclick = () => { $('personMenu').hidden = true; toast('Apasă ⌗ pe poza dorită'); };
     $('personMerge').onclick = () => openPeoplePick();
     $('personLink').onclick = () => openLinkAccount();
+    $('personPet').onclick = async () => {
+      $('personMenu').hidden = true;
+      try {
+        const d = await api('/api/people/' + cur.personId, { method: 'PATCH', body: { isPet: !(curPerson && curPerson.isPet) } });
+        curPerson = d.person;
+        toast(curPerson.isPet ? 'Marcat ca animal' : 'Marcat ca persoană');
+        renderPerson();
+      } catch (e) { toast(e.message); }
+    };
+    $('personHide').onclick = async () => {
+      $('personMenu').hidden = true;
+      try {
+        await api('/api/people/' + cur.personId, { method: 'PATCH', body: { hidden: true } });
+        toast('Ascunsă');
+        location.hash = '#/people';
+      } catch (e) { toast(e.message); }
+    };
     $('personDismiss').onclick = async () => {
       $('personMenu').hidden = true;
       if (!confirm('Marchezi gruparea asta ca „nu e o persoană"? Pozele rămân în galerie.')) return;

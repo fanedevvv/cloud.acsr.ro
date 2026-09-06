@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=74">
+  <link rel="stylesheet" href="/assets/styles.css?v=75">
 </head>
 <body>
   <div class="app">
@@ -163,6 +163,8 @@
               <button id="personCover" class="menu-item"><span class="msi">wallpaper</span>Alege coperta</button>
               <button id="personMerge" class="menu-item"><span class="msi">merge</span>Unește cu altă persoană…</button>
               <button id="personLink" class="menu-item"><span class="msi">link</span>Leagă de un cont…</button>
+              <button id="personPet" class="menu-item"><span class="msi">pets</span>Marchează ca animal</button>
+              <button id="personHide" class="menu-item"><span class="msi">visibility_off</span>Ascunde persoana</button>
               <button id="personDismiss" class="menu-item"><span class="msi">person_off</span>Nu e o persoană</button>
             </div>
           </div>
@@ -508,6 +510,14 @@
     </div>
   </div>
 
+  <div id="storageModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Gestionează stocarea</h2>
+      <div id="storageBody" class="storage-body"></div>
+      <div class="modal-actions"><span></span><button id="storageClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
   <div id="dangerModal" class="modal" hidden>
     <div class="modal-card">
       <h2 id="dangerTitle">Confirmare</h2>
@@ -563,9 +573,9 @@
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=74"></script>
-  <script src="/assets/veditor.js?v=74"></script>
-  <script src="/assets/app.js?v=74"></script>
-  <script src="/assets/pwa.js?v=74"></script>
+  <script src="/assets/editor.js?v=75"></script>
+  <script src="/assets/veditor.js?v=75"></script>
+  <script src="/assets/app.js?v=75"></script>
+  <script src="/assets/pwa.js?v=75"></script>
 </body>
 </html>

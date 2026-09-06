@@ -163,6 +163,18 @@ body {
 .storage-fill.warn { background: linear-gradient(90deg, #f9ab00, #e37400); }
 .storage-fill.full { background: linear-gradient(90deg, var(--danger), #a50e0e); }
 .storage-text { margin-top: 8px; }
+.side-storage { cursor: pointer; }
+.storage-body { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.storage-bar-big { height: 14px; border-radius: 999px; overflow: hidden; display: flex; background: var(--surface-2); }
+.storage-bar-big > span { display: block; height: 100%; }
+.storage-seg-photo { background: var(--accent); }
+.storage-seg-video { background: #8e44ad; }
+.storage-seg-trash { background: var(--danger); }
+.storage-legend { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.storage-legend .row { display: flex; align-items: center; gap: 8px; }
+.storage-legend .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.storage-legend .val { margin-left: auto; color: var(--text-dim); }
+.info-ocr-text { white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; background: var(--surface-2); border-radius: 8px; padding: 8px; font-size: 13px; margin-bottom: 4px; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .side-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .4); z-index: 39; }

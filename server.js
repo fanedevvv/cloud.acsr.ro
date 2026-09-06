@@ -702,6 +702,19 @@ app.get('/api/stats', requireAuth, async (req, res) => {
   res.json({ usedBytes, totalBytes, count });
 });
 
+// Repartiția stocării pe tipuri (pentru ecranul „Gestionează stocarea")
+app.get('/api/storage', requireAuth, async (req, res) => {
+  const by = await db.prepare(`
+    SELECT type, COUNT(*) n, COALESCE(SUM(size),0) bytes
+    FROM media WHERE deleted_at IS NULL GROUP BY type
+  `).all();
+  const trash = await db.prepare('SELECT COUNT(*) n, COALESCE(SUM(size),0) bytes FROM media WHERE deleted_at IS NOT NULL').get();
+  const total = (await db.prepare('SELECT COALESCE(SUM(size),0) s FROM media').get()).s;
+  let totalBytes = STORAGE_LIMIT_GB > 0 ? STORAGE_LIMIT_GB * 1e9 : 0;
+  if (!totalBytes) { try { const st = fs.statfsSync(ORIGINAL_DIR); totalBytes = st.blocks * st.bsize; } catch { totalBytes = 0; } }
+  res.json({ byType: by, trash: { n: trash.n, bytes: trash.bytes }, usedBytes: total, totalBytes });
+});
+
 // Optimizare spațiu (recompresie) — job în fundal
 app.post('/api/optimize', requireAdmin, checkCsrf, jsonBody, async (req, res) => {
   if (optimize.current() && !optimize.current().finishedAt) {
@@ -842,22 +855,24 @@ app.get('/api/cleanup/suggestions', requireAuth, async (req, res) => {
 const faces = require('./lib/faces');
 
 app.get('/api/people', requireAuth, async (req, res) => {
+  const showHidden = req.query.hidden === '1';
   const rows = await db.prepare(`
-    SELECT c.id, c.name, c.n,
+    SELECT c.id, c.name, c.n, c.is_pet AS isPet, c.hidden,
            (SELECT f.media_id FROM faces f WHERE f.id = c.cover_face_id) AS coverMediaId,
            c.cover_face_id AS coverFaceId
     FROM face_clusters c
-    WHERE c.n >= 2
+    WHERE c.n >= 2 ${showHidden ? '' : 'AND c.hidden = 0'}
     ORDER BY (c.name IS NULL), c.n DESC
   `).all();
-  res.json(rows);
+  res.json(rows.map((r) => ({ ...r, isPet: !!r.isPet, hidden: !!r.hidden })));
 });
 
 app.get('/api/people/:cid', requireAuth, async (req, res) => {
   const cid = String(req.params.cid);
   if (!UUID_RE.test(cid)) return res.status(404).json({ error: 'nu există' });
-  const cl = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId FROM face_clusters WHERE id = ?').get(cid);
+  const cl = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId, hidden, is_pet AS isPet FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
+  cl.hidden = !!cl.hidden; cl.isPet = !!cl.isPet;
   const rawRows = await db.prepare(`
     SELECT ${MEDIA_COLS} FROM media
     WHERE id IN (SELECT DISTINCT media_id FROM faces WHERE cluster_id = ?)
@@ -895,8 +910,10 @@ app.patch('/api/people/:cid', requireAuth, checkCsrf, jsonBody, async (req, res)
       await db.prepare('UPDATE face_clusters SET linked_user_id = ? WHERE id = ?').run(uid, cid);
     }
   }
-  const out = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId FROM face_clusters WHERE id = ?').get(cid);
-  res.json({ ok: true, person: out, name: out.name });
+  if ('hidden' in b) await db.prepare('UPDATE face_clusters SET hidden = ? WHERE id = ?').run(b.hidden ? 1 : 0, cid);
+  if ('isPet' in b) await db.prepare('UPDATE face_clusters SET is_pet = ? WHERE id = ?').run(b.isPet ? 1 : 0, cid);
+  const out = await db.prepare('SELECT id, name, n, cover_face_id AS coverFaceId, linked_user_id AS linkedUserId, hidden, is_pet AS isPet FROM face_clusters WHERE id = ?').get(cid);
+  res.json({ ok: true, person: { ...out, hidden: !!out.hidden, isPet: !!out.isPet }, name: out.name });
 });
 
 // Utilizatori cu care se poate lega o persoană recunoscută (pentru sugestii de partajare)
@@ -1108,7 +1125,7 @@ app.get('/api/media/:id/context', requireAuth, async (req, res) => {
   } catch { people = []; }
   let tags = [];
   try { tags = (await db.prepare('SELECT tag FROM media_tags WHERE media_id = ? ORDER BY score DESC').all(row.id)).map((t) => t.tag); } catch {}
-  res.json({ albums, shared: !!row.share_token, people, tags, place: row.place || null });
+  res.json({ albums, shared: !!row.share_token, people, tags, place: row.place || null, ocrText: row.ocr_text || null });
 });
 
 // Actualizează favorite / arhivat / descriere
