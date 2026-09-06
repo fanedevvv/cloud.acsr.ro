@@ -1087,6 +1087,76 @@ app.get('/api/memories', requireAuth, async (req, res) => {
   res.json(rawRows.map(mapRow));
 });
 
+// Colecții tematice pentru „Amintiri": cele mai bune din luna trecută,
+// călătorii (grupuri de zile consecutive cu geotag), teme din „Lucruri".
+app.get('/api/memories/collections', requireAuth, async (req, res) => {
+  const out = [];
+  const nowIso = new Date().toISOString();
+
+  // 1. Cele mai bune din luna trecută
+  const lm = new Date(); lm.setMonth(lm.getMonth() - 1);
+  const lmKey = lm.getFullYear() + '-' + String(lm.getMonth() + 1).padStart(2, '0');
+  const lmRows = await db.prepare(`
+    SELECT ${MEDIA_COLS} FROM media
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
+      AND DATE_FORMAT(COALESCE(taken_at, created_at), '%Y-%m') = ?
+    ORDER BY favorite DESC, COALESCE(taken_at, created_at) DESC LIMIT 30
+  `).all(lmKey);
+  if (lmRows.length >= 3) {
+    const mn = lm.toLocaleDateString('ro-RO', { month: 'long' });
+    out.push({ id: 'bestof-' + lmKey, title: 'Cele mai bune din ' + mn.charAt(0).toUpperCase() + mn.slice(1), items: lmRows.map(mapRow) });
+  }
+
+  // 2. Teme din „Lucruri" (dacă există etichete)
+  for (const [tag, title] of [['Apus', 'Apusuri'], ['Mâncare', 'Mâncare'], ['Animale', 'Animale'], ['Plajă', 'La plajă'], ['Natură', 'Natură']]) {
+    const rows = await db.prepare(`
+      SELECT ${MEDIA_COLS} FROM media m
+      WHERE m.deleted_at IS NULL AND m.archived = 0 AND m.locked = 0 AND m.is_live_motion = 0
+        AND m.id IN (SELECT media_id FROM media_tags WHERE tag = ?)
+      ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 30
+    `).all(tag);
+    if (rows.length >= 4) out.push({ id: 'theme-' + tag, title, items: rows.map(mapRow) });
+  }
+
+  // 3. Călătorii: grupuri de poze geotag-uite despărțite de pauze mari
+  const geo = await db.prepare(`
+    SELECT ${MEDIA_COLS}, place, city FROM media
+    WHERE deleted_at IS NULL AND archived = 0 AND locked = 0 AND is_live_motion = 0
+      AND lat IS NOT NULL
+    ORDER BY COALESCE(taken_at, created_at) ASC
+  `).all();
+  let trip = [];
+  const GAP = 30 * 60 * 60 * 1000; // 30h
+  const flushTrip = () => {
+    if (trip.length >= 6) {
+      const a = trip[0], z = trip[trip.length - 1];
+      const at = new Date(a.taken_at || a.created_at), zt = new Date(z.taken_at || z.created_at);
+      const spanDays = (zt - at) / 86400000;
+      if (spanDays >= 0.7) {
+        const placeName = trip.map((x) => x.city || x.place).find(Boolean) || 'Călătorie';
+        out.push({
+          id: 'trip-' + (a.taken_at || a.created_at).slice(0, 10),
+          title: 'Călătorie · ' + placeName,
+          sub: at.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' }) + ' – ' + zt.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short', year: 'numeric' }),
+          items: trip.slice(0, 40).map(mapRow),
+        });
+      }
+    }
+    trip = [];
+  };
+  for (const r of geo) {
+    if (trip.length) {
+      const prev = new Date(trip[trip.length - 1].taken_at || trip[trip.length - 1].created_at);
+      const cur = new Date(r.taken_at || r.created_at);
+      if (cur - prev > GAP) flushTrip();
+    }
+    trip.push(r);
+  }
+  flushTrip();
+
+  res.json(out.slice(0, 12));
+});
+
 // „Sugestii de film" — zile din trecutul apropiat cu multe poze, bune pt. slideshow
 app.get('/api/events/suggestions', requireAuth, async (req, res) => {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();

@@ -33,6 +33,7 @@ let searchT = null;
 let albums = [];
 let memories = [];
 let events = [];
+let collections = [];
 let stats = null;
 let isAdmin = false;
 let me = null;
@@ -107,6 +108,7 @@ async function loadAll() {
   loadStats();
   try { memories = await api('/api/memories'); } catch { memories = []; }
   try { events = await api('/api/events/suggestions'); } catch { events = []; }
+  try { collections = await api('/api/memories/collections'); } catch { collections = []; }
 }
 async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
 async function loadTrash() { trashList = await api('/api/media?filter=trash'); }
@@ -598,6 +600,7 @@ function renderGrid() {
   renderChips();
   renderMemories();
   renderEvents();
+  renderCollections();
   buildGallery($('grid'), list, { flat: searching });
   populateJump(searching ? [] : list);
   const waiting = !!(query && query.length >= 2 && searchPending);
@@ -841,6 +844,35 @@ function renderEvents() {
   }
 }
 
+function renderCollections() {
+  const strip = $('collectionsStrip');
+  if (!strip) return;
+  const show = cur.view === 'all' && !query && (collections || []).length > 0;
+  strip.hidden = !show;
+  if (!show) return;
+  strip.textContent = '';
+  for (const col of collections) {
+    if (!col.items || !col.items.length) continue;
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'evt-card';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = '/media/' + col.items[0].id + '/thumb';
+    c.appendChild(img);
+    const capBox = document.createElement('div');
+    capBox.className = 'evt-cap';
+    capBox.innerHTML = '<span class="evt-title">' + escapeHtml(col.title) + '</span><span class="evt-sub">'
+      + (col.sub ? escapeHtml(col.sub) : col.items.length + ' poze') + '</span>';
+    c.appendChild(capBox);
+    c.onclick = () => {
+      for (const it of col.items) if (!media.find((m) => m.id === it.id)) media.push(it);
+      openLightbox(col.items, col.items[0].id);
+    };
+    strip.appendChild(c);
+  }
+}
+
 function dateRange(aIso, bIso) {
   if (!aIso) return '';
   const a = new Date(aIso);
@@ -991,7 +1023,45 @@ function renderAlbums() {
   $('albumsEmpty').hidden = albums.length > 0;
   // Album nou doar dacă ai poze proprii încărcate
   $('newAlbumBtn').hidden = !(me && me.canMakeAlbum);
+  renderAlbumSuggest();
   for (const a of albums) grid.appendChild(albumCard(a));
+}
+
+function renderAlbumSuggest() {
+  const box = $('albumSuggest');
+  if (!box) return;
+  const dismissed = new Set(dismissedEvents());
+  const list = (events || []).filter((e) => !dismissed.has('album-' + e.date));
+  const canMake = me && me.canMakeAlbum;
+  box.hidden = !(canMake && list.length);
+  if (box.hidden) return;
+  box.textContent = '';
+  for (const ev of list) {
+    const c = document.createElement('div');
+    c.className = 'evt-card';
+    const img = document.createElement('img'); img.loading = 'lazy'; img.src = '/media/' + ev.items[0].id + '/thumb';
+    c.appendChild(img);
+    const dismiss = document.createElement('button');
+    dismiss.className = 'evt-dismiss'; dismiss.type = 'button'; dismiss.innerHTML = '<span class="msi">close</span>';
+    dismiss.onclick = () => { const d = dismissedEvents(); d.push('album-' + ev.date); localStorage.setItem('dismissedEvents', JSON.stringify(d)); renderAlbumSuggest(); };
+    c.appendChild(dismiss);
+    const capBox = document.createElement('div');
+    capBox.className = 'evt-cap';
+    const lbl = cap(new Date(ev.date + 'T12:00:00').toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' }));
+    capBox.innerHTML = '<span class="evt-title">' + lbl + '</span><span class="evt-sub">' + ev.count + ' poze</span>'
+      + '<button class="evt-make" type="button"><span class="msi">add</span>Creează album</button>';
+    capBox.querySelector('.evt-make').onclick = async () => {
+      try {
+        const a = await api('/api/albums', { method: 'POST', body: { name: lbl } });
+        await api('/api/albums/' + a.id + '/items', { method: 'POST', body: { ids: ev.items.map((it) => it.id) } });
+        const d = dismissedEvents(); d.push('album-' + ev.date); localStorage.setItem('dismissedEvents', JSON.stringify(d));
+        await loadAlbums(); renderAlbums();
+        toast('Album creat cu ' + ev.items.length + ' poze');
+      } catch (e) { toast(e.message); }
+    };
+    c.appendChild(capBox);
+    box.appendChild(c);
+  }
 }
 
 async function renderShares() {
