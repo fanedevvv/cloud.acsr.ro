@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=76">
+  <link rel="stylesheet" href="/assets/styles.css?v=77">
 </head>
 <body>
   <div class="app">
@@ -115,6 +115,24 @@
           <button class="chip" data-cat="selfies" type="button"><span class="msi">face</span>Selfie</button>
           <button class="chip" data-cat="geo" type="button"><span class="msi">location_on</span>Cu locație</button>
           <select id="chipYear" class="chip-year"><option value="">Toți anii</option></select>
+          <select id="chipMonth" class="chip-year"><option value="">Orice lună</option>
+            <option value="01">ian</option><option value="02">feb</option><option value="03">mar</option>
+            <option value="04">apr</option><option value="05">mai</option><option value="06">iun</option>
+            <option value="07">iul</option><option value="08">aug</option><option value="09">sep</option>
+            <option value="10">oct</option><option value="11">nov</option><option value="12">dec</option>
+          </select>
+          <button id="chipAdvBtn" class="chip" type="button"><span class="msi">tune</span>Mai multe</button>
+        </div>
+        <div id="chipsAdv" class="chips" hidden>
+          <label class="adv-f">De la <input type="date" id="advFrom"></label>
+          <label class="adv-f">Până la <input type="date" id="advTo"></label>
+          <select id="advVidLen" class="chip-year">
+            <option value="0">Orice durată video</option>
+            <option value="30">video &gt; 30s</option>
+            <option value="60">video &gt; 1 min</option>
+            <option value="300">video &gt; 5 min</option>
+          </select>
+          <button id="advClear" class="chip" type="button">Șterge filtrele</button>
         </div>
         <div id="memStrip" class="mem-strip" hidden></div>
         <div id="eventsStrip" class="mem-strip events-strip" hidden></div>
@@ -175,7 +193,7 @@
       </main>
 
       <main id="viewPlaces" class="view view-places" hidden>
-        <div class="section-head"><h1>Locuri</h1><div class="spacer"></div><span id="placesCount" class="muted"></span></div>
+        <div class="section-head"><h1>Locuri</h1><div class="spacer"></div><button id="heatToggle" class="chip" type="button"><span class="msi">whatshot</span>Heatmap</button><span id="placesCount" class="muted"></span></div>
         <div id="map" class="map"></div>
         <div id="placesList" class="places-list" hidden></div>
         <div id="placesEmpty" class="empty" hidden><span class="msi big">map</span><p>Nicio poză cu locație încă.</p><p class="muted">Pozele cu GPS din EXIF apar aici pe hartă.</p></div>
@@ -594,10 +612,11 @@
 
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
+  <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=76"></script>
-  <script src="/assets/veditor.js?v=76"></script>
-  <script src="/assets/app.js?v=76"></script>
-  <script src="/assets/pwa.js?v=76"></script>
+  <script src="/assets/editor.js?v=77"></script>
+  <script src="/assets/veditor.js?v=77"></script>
+  <script src="/assets/app.js?v=77"></script>
+  <script src="/assets/pwa.js?v=77"></script>
 </body>
 </html>

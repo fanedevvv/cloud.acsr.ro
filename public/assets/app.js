@@ -41,10 +41,12 @@ let filterType = 'all';
 let filterFav = false;
 let filterYear = '';
 let filterCat = ''; // '', 'screenshots', 'selfies', 'geo'
+let filterMonth = '', filterFrom = '', filterTo = '', filterVidLen = 0;
 let gridZoom = 1;
 let lastSelId = null; // pentru selecție cu Shift pe interval
 let placesMap = null;
 let placesLayer = null;
+let heatLayer = null, heatOn = false;
 let cur = { view: 'all', albumId: null, album: null, items: [] };
 
 const selected = new Set();
@@ -559,6 +561,11 @@ function applyFilters(list) {
     if (filterCat === 'selfies' && m.kindAuto !== 'selfie') return false;
     if (filterCat === 'geo' && !m.hasGeo) return false;
     if (filterYear && String(new Date(m.takenAt || m.createdAt).getFullYear()) !== filterYear) return false;
+    const dk = (m.takenAt || m.createdAt || '').slice(0, 10);
+    if (filterMonth && dk.slice(5, 7) !== filterMonth) return false;
+    if (filterFrom && dk < filterFrom) return false;
+    if (filterTo && dk > filterTo) return false;
+    if (filterVidLen && !(m.type === 'video' && (m.duration || 0) >= filterVidLen)) return false;
     return true;
   });
 }
@@ -747,7 +754,15 @@ function renderChips() {
   const want = ['<option value="">Toți anii</option>'].concat(years.map((y) => '<option value="' + y + '">' + y + '</option>')).join('');
   if (sel.dataset.built !== want) { sel.innerHTML = want; sel.dataset.built = want; }
   sel.value = filterYear;
+  if ($('chipMonth')) $('chipMonth').value = filterMonth;
+  if ($('advVidLen')) $('advVidLen').value = String(filterVidLen);
+  if ($('advFrom')) $('advFrom').value = filterFrom;
+  if ($('advTo')) $('advTo').value = filterTo;
+  const anyAdv = filterMonth || filterFrom || filterTo || filterVidLen;
+  if ($('chipAdvBtn')) $('chipAdvBtn').classList.toggle('on', !!(advOpen || anyAdv));
+  if ($('chipsAdv')) $('chipsAdv').hidden = !show || !(advOpen || anyAdv);
 }
+let advOpen = false;
 
 function renderMemories() {
   const strip = $('memStrip');
@@ -2293,6 +2308,18 @@ function escapeHtml(s) {
 }
 
 // ─── Locuri (hartă) ────────────────────────────────────────────────────────
+function applyHeatMode(pts) {
+  if (!placesMap) return;
+  if (heatLayer) { placesMap.removeLayer(heatLayer); heatLayer = null; }
+  if (heatOn && window.L && L.heatLayer) {
+    heatLayer = L.heatLayer(pts.map((p) => [p.lat, p.lon, 1]), { radius: 24, blur: 18, maxZoom: 12 });
+    placesMap.addLayer(heatLayer);
+    if (placesLayer) placesMap.removeLayer(placesLayer);
+  } else if (placesLayer && !placesMap.hasLayer(placesLayer)) {
+    placesMap.addLayer(placesLayer);
+  }
+}
+
 async function renderPlaces() {
   updateNav();
   let pts = [];
@@ -2332,11 +2359,13 @@ async function renderPlaces() {
     placesLayer.addLayer(m);
     bounds.push([p.lat, p.lon]);
   }
-  placesMap.addLayer(placesLayer);
+  applyHeatMode(pts);
   requestAnimationFrame(() => {
     placesMap.invalidateSize();
     if (bounds.length) placesMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
   });
+  $('heatToggle').classList.toggle('on', heatOn);
+  $('heatToggle').onclick = () => { heatOn = !heatOn; applyHeatMode(pts); $('heatToggle').classList.toggle('on', heatOn); };
 
   // listă de locuri (grupate pe oraș/țară)
   let sum = [];
@@ -3052,6 +3081,12 @@ function wire() {
     b.onclick = () => { filterCat = filterCat === b.dataset.cat ? '' : b.dataset.cat; renderGrid(); };
   });
   $('chipYear').onchange = (e) => { filterYear = e.target.value; renderGrid(); };
+  if ($('chipMonth')) $('chipMonth').onchange = (e) => { filterMonth = e.target.value; renderGrid(); };
+  if ($('chipAdvBtn')) $('chipAdvBtn').onclick = () => { advOpen = !advOpen; renderChips(); };
+  if ($('advFrom')) $('advFrom').onchange = (e) => { filterFrom = e.target.value; renderGrid(); };
+  if ($('advTo')) $('advTo').onchange = (e) => { filterTo = e.target.value; renderGrid(); };
+  if ($('advVidLen')) $('advVidLen').onchange = (e) => { filterVidLen = Number(e.target.value) || 0; renderGrid(); };
+  if ($('advClear')) $('advClear').onclick = () => { filterMonth = filterFrom = filterTo = ''; filterVidLen = 0; renderGrid(); };
   if ($('jumpSel')) $('jumpSel').onchange = (e) => {
     const v = e.target.value; e.target.value = '';
     if (!v) return;
