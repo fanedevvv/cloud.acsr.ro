@@ -20,9 +20,13 @@
   };
   const ASPECTS = [['Liber', 0], ['1:1', 1], ['4:3', 4 / 3], ['3:4', 3 / 4], ['16:9', 16 / 9], ['9:16', 9 / 16]];
 
+  const DRAW_COLORS = ['#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#0a84ff', '#000000', '#ffffff'];
+  let pendingText = null;   // șir de text ce așteaptă plasarea la următorul clic
+
   function freshState() {
     return { rot: 0, flipH: false, flipV: false, crop: null, aspect: 0,
-      adj: { bright: 100, contrast: 100, sat: 100, warm: 0 }, preset: 'none' };
+      adj: { bright: 100, contrast: 100, sat: 100, warm: 0 }, preset: 'none',
+      annots: [], drawColor: '#ff3b30', drawLevel: 2 };
   }
 
   // ─── DOM ─────────────────────────────────────────────────────────────────
@@ -45,6 +49,7 @@
         <button class="ed-tab on" data-tab="adjust"><span class="msi">tune</span>Ajustări</button>
         <button class="ed-tab" data-tab="filter"><span class="msi">auto_awesome</span>Filtre</button>
         <button class="ed-tab" data-tab="crop"><span class="msi">crop_rotate</span>Decupare</button>
+        <button class="ed-tab" data-tab="draw"><span class="msi">draw</span>Desen</button>
       </div>
       <div class="ed-panel" data-panel="adjust">
         ${slider('bright', 'Luminozitate', 50, 150)}
@@ -62,6 +67,18 @@
           <span class="ed-sep"></span>
           <div class="ed-aspects"></div>
         </div>
+      </div>
+      <div class="ed-panel" data-panel="draw" hidden>
+        <div class="ed-draw-tools">
+          <div class="ed-colors"></div>
+          <span class="ed-sep"></span>
+          <button class="ed-ic" data-ed="dSize" title="Grosime"><span class="msi">line_weight</span></button>
+          <button class="ed-ic" data-ed="dText" title="Adaugă text"><span class="msi">title</span></button>
+          <span class="ed-sep"></span>
+          <button class="ed-ic" data-ed="dUndo" title="Anulează ultima"><span class="msi">undo</span></button>
+          <button class="ed-ic" data-ed="dClear" title="Șterge tot"><span class="msi">delete</span></button>
+        </div>
+        <div class="ed-draw-hint muted">Desenează cu degetul sau mouse-ul peste poză. „Text" adaugă o etichetă la următorul clic.</div>
       </div>`;
     document.body.appendChild(root);
     wrap = root.querySelector('.ed-cwrap');
@@ -82,6 +99,14 @@
       b.onclick = () => { st.aspect = r; if (r) fixAspect(); draw(); markAspects(); };
       asp.appendChild(b);
     }
+    const cols = root.querySelector('.ed-colors');
+    for (const c of DRAW_COLORS) {
+      const b = document.createElement('button');
+      b.className = 'ed-color'; b.dataset.color = c;
+      b.style.background = c;
+      b.onclick = () => { st.drawColor = c; pendingText = null; markColors(); };
+      cols.appendChild(b);
+    }
 
     root.addEventListener('input', (e) => {
       const s = e.target.closest('input[type=range]');
@@ -96,6 +121,7 @@
       const t = e.target.closest('.ed-tab'); if (t) return setMode(t.dataset.tab);
     });
     initCropDrag();
+    initDraw();
   }
   function slider(k, label, min, max) {
     return `<label class="ed-slider"><span>${label}</span>
@@ -132,6 +158,32 @@
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
+    paintAnnots(ctx);
+  }
+  function paintAnnots(ctx) {
+    for (const an of (st.annots || [])) {
+      ctx.save();
+      if (an.type === 'text') {
+        ctx.fillStyle = an.color;
+        ctx.font = 'bold ' + an.size + 'px Roboto, Arial, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = an.size / 6;
+        ctx.fillText(an.text, an.x, an.y);
+      } else {
+        ctx.strokeStyle = an.color;
+        ctx.lineWidth = an.width;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        an.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        if (an.pts.length === 1) { ctx.lineTo(an.pts[0].x + 0.01, an.pts[0].y); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  function brushWidth() {
+    const os = orientedSize();
+    return Math.max(2, Math.round(os.w / 400 * (st.drawLevel || 2)));
   }
   function draw() {
     if (!img || !img.complete || !img.naturalWidth) return;
@@ -211,6 +263,52 @@
     const onUp = () => { cropDrag = null; window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
     wrap.addEventListener('pointerdown', onDown);
   }
+  function initDraw() {
+    let stroke = null;
+    const toImg = (e) => {
+      const r = wrap.getBoundingClientRect();
+      const os = orientedSize();
+      return { x: (e.clientX - r.left) / r.width * os.w, y: (e.clientY - r.top) / r.height * os.h };
+    };
+    const onMove = (e) => {
+      if (!stroke) return;
+      stroke.pts.push(toImg(e));
+      draw();
+    };
+    const onUp = () => {
+      stroke = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    wrap.addEventListener('pointerdown', (e) => {
+      if (mode !== 'draw') return;
+      e.preventDefault();
+      const p = toImg(e);
+      if (pendingText != null) {
+        const os = orientedSize();
+        st.annots.push({ type: 'text', color: st.drawColor, size: Math.max(16, Math.round(os.w / 26)), x: p.x, y: p.y, text: pendingText });
+        pendingText = null;
+        updateDrawHint();
+        draw();
+        return;
+      }
+      stroke = { type: 'stroke', color: st.drawColor, width: brushWidth(), pts: [p] };
+      st.annots.push(stroke);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      draw();
+    });
+  }
+  function markColors() {
+    root.querySelectorAll('.ed-color').forEach((b) => b.classList.toggle('on', b.dataset.color === st.drawColor));
+  }
+  function updateDrawHint() {
+    const h = root.querySelector('.ed-draw-hint');
+    if (!h) return;
+    h.textContent = pendingText != null
+      ? 'Atinge poza ca să pui textul „' + pendingText + '".'
+      : 'Desenează cu degetul sau mouse-ul peste poză. „Text" adaugă o etichetă la următorul clic.';
+  }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   // ─── Acțiuni ─────────────────────────────────────────────────────────────
@@ -219,6 +317,8 @@
     root.querySelectorAll('.ed-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === m));
     root.querySelectorAll('.ed-panel').forEach((p) => (p.hidden = p.dataset.panel !== m));
     if (m === 'crop' && !st.crop) st.crop = { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+    if (m !== 'draw') pendingText = null;
+    if (m === 'draw') { markColors(); updateDrawHint(); }
     draw();
   }
   function markFilters() {
@@ -276,6 +376,14 @@
     if (a === 'rotR') { st.rot = (st.rot + 90) % 360; st.crop = null; draw(); }
     if (a === 'flipH') { st.flipH = !st.flipH; draw(); }
     if (a === 'flipV') { st.flipV = !st.flipV; draw(); }
+    if (a === 'dSize') { st.drawLevel = (st.drawLevel % 3) + 1; }
+    if (a === 'dText') {
+      const t = prompt('Text de adăugat pe poză:');
+      pendingText = (t && t.trim()) ? t.trim().slice(0, 120) : null;
+      updateDrawHint();
+    }
+    if (a === 'dUndo') { st.annots.pop(); pendingText = null; updateDrawHint(); draw(); }
+    if (a === 'dClear') { st.annots = []; pendingText = null; updateDrawHint(); draw(); }
   }
 
   // ─── Salvare ─────────────────────────────────────────────────────────────
@@ -302,7 +410,7 @@
 
   function open(it, cb) {
     build();
-    item = it; onSaved = cb; st = freshState(); mode = 'adjust'; img = null;
+    item = it; onSaved = cb; st = freshState(); mode = 'adjust'; img = null; pendingText = null;
     root.hidden = false;
     document.body.classList.add('no-scroll');
     setMode('adjust'); markFilters(); markAspects(); syncSliders();

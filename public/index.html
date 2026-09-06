@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=78">
+  <link rel="stylesheet" href="/assets/styles.css?v=79">
 </head>
 <body>
   <div class="app">
@@ -548,6 +548,32 @@
     </div>
   </div>
 
+  <div id="metaEditModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Editează data și informațiile</h2>
+      <p class="muted" id="metaEditCount"></p>
+      <div class="meta-edit">
+        <label class="meta-f">
+          <span>Setează data și ora exactă</span>
+          <input id="metaDateTime" type="datetime-local">
+        </label>
+        <p class="muted meta-or">— sau —</p>
+        <label class="meta-f">
+          <span>Mută timpul cu (minute, poate fi negativ)</span>
+          <input id="metaShift" type="number" step="1" placeholder="ex: -60 pentru o oră înapoi">
+        </label>
+        <label class="meta-f">
+          <span>Cameră / aparat foto</span>
+          <input id="metaCamera" type="text" maxlength="150" placeholder="ex: Canon EOS 90D">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="metaEditClose" class="btn">Anulează</button>
+        <button id="metaEditSave" class="btn primary">Aplică</button>
+      </div>
+    </div>
+  </div>
+
   <div id="dangerModal" class="modal" hidden>
     <div class="modal-card">
       <h2 id="dangerTitle">Confirmare</h2>
@@ -616,9 +642,9 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=78"></script>
-  <script src="/assets/veditor.js?v=78"></script>
-  <script src="/assets/app.js?v=78"></script>
-  <script src="/assets/pwa.js?v=78"></script>
+  <script src="/assets/editor.js?v=79"></script>
+  <script src="/assets/veditor.js?v=79"></script>
+  <script src="/assets/app.js?v=79"></script>
+  <script src="/assets/pwa.js?v=79"></script>
 </body>
 </html>

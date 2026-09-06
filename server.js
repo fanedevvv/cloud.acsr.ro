@@ -1213,6 +1213,16 @@ app.patch('/api/media/:id', requireAuth, checkCsrf, jsonBody, async (req, res) =
   if ('favorite' in b) { sets.push('favorite = :favorite'); vals.favorite = b.favorite ? 1 : 0; }
   if ('archived' in b) { sets.push('archived = :archived'); vals.archived = b.archived ? 1 : 0; }
   if ('caption' in b) { sets.push('caption = :caption'); vals.caption = String(b.caption || '').slice(0, 2000); }
+  if ('camera' in b) { sets.push('camera = :camera'); vals.camera = b.camera ? String(b.camera).slice(0, 150) : null; }
+  if ('takenAt' in b) {
+    const t = b.takenAt ? new Date(b.takenAt) : null;
+    if (b.takenAt && Number.isNaN(t && t.getTime())) return res.status(400).json({ error: 'dată invalidă' });
+    sets.push('taken_at = :takenAt'); vals.takenAt = t ? t.toISOString() : null;
+  }
+  if ('shiftMinutes' in b && Number.isFinite(Number(b.shiftMinutes))) {
+    const base = new Date(row.taken_at || row.created_at);
+    if (!Number.isNaN(base.getTime())) { sets.push('taken_at = :takenAt'); vals.takenAt = new Date(base.getTime() + Number(b.shiftMinutes) * 60000).toISOString(); }
+  }
   if ('lat' in b && 'lon' in b) {
     const lat = Number(b.lat), lon = Number(b.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {

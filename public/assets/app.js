@@ -1255,6 +1255,7 @@ function renderSelActions() {
     box.appendChild(selBtn('movie', 'Slideshow video', () => openSlideshow([...selected])));
     box.appendChild(selBtn('grid_view', 'Colaj', () => openCollage([...selected])));
     box.appendChild(selBtn('gif_box', 'Animație', () => openAnimation([...selected])));
+    box.appendChild(selBtn('edit_calendar', 'Editează data/info', () => openMetaEdit([...selected])));
   }
   if (cur.view === 'album') {
     box.appendChild(selBtn('remove', 'Scoate din album', async () => {
@@ -1404,6 +1405,54 @@ function wireAnimation() {
       }
       if (j.phase === 'error') { clearInterval(poll); $('animStat').textContent = j.error || 'eroare'; $('animStart').disabled = false; }
     }, 1200);
+  };
+}
+
+// ─── Editor date / info în lot ─────────────────────────────────────────────
+let metaEditIds = [];
+function openMetaEdit(ids) {
+  metaEditIds = (ids || []).slice();
+  if (!metaEditIds.length) return;
+  $('metaEditCount').textContent = metaEditIds.length + (metaEditIds.length === 1 ? ' element selectat' : ' elemente selectate');
+  $('metaDateTime').value = '';
+  $('metaShift').value = '';
+  $('metaCamera').value = '';
+  if (metaEditIds.length === 1) {
+    const m = media.find((x) => x.id === metaEditIds[0]) || (cur.items || []).find((x) => x.id === metaEditIds[0]);
+    if (m) {
+      const t = new Date(m.takenAt || m.taken_at || m.createdAt || m.created_at || Date.now());
+      if (!Number.isNaN(t.getTime())) {
+        const p = (n) => String(n).padStart(2, '0');
+        $('metaDateTime').value = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}T${p(t.getHours())}:${p(t.getMinutes())}`;
+      }
+      if (m.camera) $('metaCamera').value = m.camera;
+    }
+  }
+  $('metaEditModal').hidden = false;
+}
+function wireMetaEdit() {
+  $('metaEditClose').onclick = () => { $('metaEditModal').hidden = true; };
+  $('metaEditSave').onclick = async () => {
+    const dt = $('metaDateTime').value;
+    const shift = $('metaShift').value.trim();
+    const cam = $('metaCamera').value.trim();
+    const body = {};
+    if (dt) body.takenAt = new Date(dt).toISOString();
+    else if (shift !== '' && Number.isFinite(Number(shift))) body.shiftMinutes = Number(shift);
+    if (cam || (metaEditIds.length === 1)) body.camera = cam;
+    if (!('takenAt' in body) && !('shiftMinutes' in body) && !('camera' in body)) return toast('Nimic de schimbat');
+    $('metaEditSave').disabled = true;
+    let done = 0;
+    for (const id of metaEditIds) {
+      try { await api('/api/media/' + id, { method: 'PATCH', body }); done++; } catch { /* continuă */ }
+    }
+    $('metaEditSave').disabled = false;
+    $('metaEditModal').hidden = true;
+    toast('Actualizat pentru ' + done + ' din ' + metaEditIds.length);
+    clearSel();
+    await loadAll();
+    if (cur.view === 'album') await loadAlbum(cur.albumId);
+    rerender();
   };
 }
 
@@ -3180,6 +3229,7 @@ function wire() {
   wireSlideshow();
   wireCollage();
   wireAnimation();
+  wireMetaEdit();
   wireAccount();
 
   // ─── Stare & backup ────────────────────────────────────────────────────

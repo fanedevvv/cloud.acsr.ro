@@ -577,6 +577,10 @@ body.selecting .chk { opacity: 1; }
 .share-suggest { margin-bottom: 14px; }
 .share-exp { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
 .share-exp select { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
+.meta-edit { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
+.meta-f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-dim); }
+.meta-f input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
+.meta-or { text-align: center; margin: -4px 0; font-size: 12px; }
 .share-suggest-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .share-suggest-chip {
   display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px;
@@ -763,6 +767,12 @@ body.selecting .chk { opacity: 1; }
 .ed-asp { background: rgba(255,255,255,.1); color: #fff; border: 0; font: inherit; font-size: 12px;
   padding: 7px 12px; border-radius: 999px; cursor: pointer; }
 .ed-asp.on { background: var(--accent); color: var(--accent-text); }
+.ed-draw-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.ed-colors { display: flex; gap: 6px; flex-wrap: wrap; }
+.ed-color { width: 26px; height: 26px; border-radius: 999px; border: 2px solid rgba(255,255,255,.35);
+  cursor: pointer; padding: 0; }
+.ed-color.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.ed-draw-hint { text-align: center; font-size: 12px; margin-top: 8px; color: rgba(255,255,255,.7); }
 
 /* ── Folder blocat  v32 ───────────────────────────────────────────────── */
 #lockGate .modal-card h2 { display: flex; align-items: center; gap: 8px; }
