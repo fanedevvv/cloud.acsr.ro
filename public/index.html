@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=75">
+  <link rel="stylesheet" href="/assets/styles.css?v=76">
 </head>
 <body>
   <div class="app">
@@ -197,6 +197,7 @@
                 <button id="albumContribToggle" class="menu-item"><span class="msi">add_photo_alternate</span>Permite adăugarea de poze<span class="mi-check msi">check</span></button>
                 <button id="albumModerate" class="menu-item"><span class="msi">forum</span>Vezi comentariile</button>
                 <button id="albumSlideshow" class="menu-item"><span class="msi">movie</span>Slideshow → video</button>
+                <button id="albumCollab" class="menu-item"><span class="msi">group_add</span>Colaboratori…</button>
                 <div class="menu2-sep"></div>
                 <button id="albumDelete" class="menu-item"><span class="msi">delete</span>Șterge album</button>
               </div>
@@ -238,6 +239,15 @@
         <input id="shareUrl" type="text" readonly>
         <button id="shareCopy" class="btn primary">Copiază</button>
       </div>
+      <label class="share-exp">Expiră:
+        <select id="shareExpiry">
+          <option value="0">niciodată</option>
+          <option value="1">peste 1 zi</option>
+          <option value="7">peste 7 zile</option>
+          <option value="30">peste 30 de zile</option>
+        </select>
+      </label>
+      <div id="shareExpiryNote" class="muted" hidden></div>
       <div id="shareQrWrap" class="share-qr" hidden><img id="shareQr" alt="Cod QR" width="200" height="200"></div>
       <div id="shareSuggest" class="share-suggest" hidden>
         <p class="muted">Persoane recunoscute în album — trimite-le o notificare:</p>
@@ -540,6 +550,18 @@
     </div>
   </div>
 
+  <div id="collabModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Colaboratori</h2>
+      <p class="muted">Colaboratorii pot adăuga/scoate poze și edita albumul (ca proprietarul), dar nu pot șterge albumul.</p>
+      <div id="collabCurrent" class="pp-list"></div>
+      <div class="menu2-sep"></div>
+      <p class="muted">Adaugă un cont:</p>
+      <div id="collabAddList" class="pp-list"></div>
+      <div class="modal-actions"><span></span><button id="collabClose" class="btn">Închide</button></div>
+    </div>
+  </div>
+
   <div id="linkAccountModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Leagă de un cont</h2>
@@ -573,9 +595,9 @@
   <script src="/assets/vendor/leaflet/leaflet.js"></script>
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=75"></script>
-  <script src="/assets/veditor.js?v=75"></script>
-  <script src="/assets/app.js?v=75"></script>
-  <script src="/assets/pwa.js?v=75"></script>
+  <script src="/assets/editor.js?v=76"></script>
+  <script src="/assets/veditor.js?v=76"></script>
+  <script src="/assets/app.js?v=76"></script>
+  <script src="/assets/pwa.js?v=76"></script>
 </body>
 </html>

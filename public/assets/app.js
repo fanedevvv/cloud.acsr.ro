@@ -1443,9 +1443,29 @@ async function openShareModal(kind, id, item) {
   $('shareUrl').value = location.origin + pubPrefix + token;
   $('shareQrWrap').hidden = true;
   $('shareQr').removeAttribute('src');
+  const curExp = kind === 'album' ? (cur.album && cur.album.shareExpiresAt) : (item && item.shareExpiresAt);
+  $('shareExpiry').value = '0';
+  updateShareExpiryNote(curExp);
+  $('shareExpiry').onchange = async () => {
+    const days = Number($('shareExpiry').value) || 0;
+    try {
+      const d = await api(apiBase, { method: 'POST', body: { expiresInDays: days } });
+      if (kind === 'album' && cur.album) cur.album.shareExpiresAt = d.expiresAt;
+      if (kind === 'photo' && item) item.shareExpiresAt = d.expiresAt;
+      updateShareExpiryNote(d.expiresAt);
+      toast(days ? 'Linkul expiră în ' + days + (days === 1 ? ' zi' : ' zile') : 'Linkul nu mai expiră');
+    } catch (e) { toast(e.message); }
+  };
   $('shareModal').hidden = false;
   if (kind === 'album') { renderAlbum(); loadShareSuggestions(id); }
   else $('shareSuggest').hidden = true;
+}
+function updateShareExpiryNote(exp) {
+  const n = $('shareExpiryNote');
+  if (!exp) { n.hidden = true; return; }
+  n.hidden = false;
+  n.textContent = 'Expiră la ' + new Date(exp).toLocaleDateString('ro-RO', { day: 'numeric', month: 'long', year: 'numeric' });
+  if (exp < new Date().toISOString()) n.textContent = 'Linkul a expirat.';
 }
 
 async function loadShareSuggestions(albumId) {
@@ -1758,6 +1778,36 @@ async function openPeoplePick() {
     box.appendChild(b);
   }
   $('peoplePick').hidden = false;
+}
+
+async function openCollab() {
+  if (!cur.albumId) return;
+  $('collabModal').hidden = false;
+  const cur1 = $('collabCurrent'), addl = $('collabAddList');
+  cur1.textContent = 'Se încarcă…'; addl.textContent = '';
+  let current = [], users = [];
+  try { [current, users] = await Promise.all([api('/api/albums/' + cur.albumId + '/collaborators'), api('/api/users/list')]); }
+  catch (e) { cur1.textContent = e.message; return; }
+  const curIds = new Set(current.map((u) => u.id));
+  cur1.textContent = '';
+  if (!current.length) cur1.innerHTML = '<p class="muted">Niciun colaborator.</p>';
+  for (const u of current) {
+    const b = document.createElement('div');
+    b.className = 'pp-row';
+    b.innerHTML = '<img loading="lazy" src="/api/users/' + u.id + '/avatar"><span>' + escapeHtml(u.displayName) + '</span>';
+    const rm = document.createElement('button'); rm.className = 'btn ghost danger'; rm.textContent = 'Scoate'; rm.style.marginLeft = 'auto';
+    rm.onclick = async () => { try { await api('/api/albums/' + cur.albumId + '/collaborators/' + u.id, { method: 'DELETE' }); openCollab(); } catch (e) { toast(e.message); } };
+    b.appendChild(rm); cur1.appendChild(b);
+  }
+  const ownerId = cur.album && cur.album.owner && cur.album.owner.id;
+  for (const u of users) {
+    if (curIds.has(u.id) || u.id === ownerId) continue;
+    const b = document.createElement('button');
+    b.className = 'pp-row'; b.type = 'button';
+    b.innerHTML = '<img loading="lazy" src="/api/users/' + u.id + '/avatar"><span>' + escapeHtml(u.displayName) + ' · @' + escapeHtml(u.username) + '</span>';
+    b.onclick = async () => { try { await api('/api/albums/' + cur.albumId + '/collaborators', { method: 'POST', body: { userId: u.id } }); openCollab(); toast('Adăugat'); } catch (e) { toast(e.message); } };
+    addl.appendChild(b);
+  }
 }
 
 async function openLinkAccount() {
@@ -2839,6 +2889,8 @@ function wire() {
   document.addEventListener('click', () => { $('albumMenu').hidden = true; });
   $('albumCoverBtn').onclick = () => openCoverPicker();
   $('albumRename').onclick = () => startTitleEdit();
+  if ($('albumCollab')) $('albumCollab').onclick = () => { $('albumMenu').hidden = true; openCollab(); };
+  if ($('collabClose')) $('collabClose').onclick = () => { $('collabModal').hidden = true; };
   $('albumCommentsToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowComments'); };
   $('albumContribToggle').onclick = (e) => { e.stopPropagation(); toggleAlbumFlag('allowContrib'); };
   $('albumModerate').onclick = () => openModeration();
