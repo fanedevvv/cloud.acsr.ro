@@ -1,6 +1,6 @@
 'use strict';
 // Versiunea trebuie bumpată odată cu assets (?v=N)
-const V = 'v86';
+const V = 'v87';
 const SHELL = 'shell-' + V;
 const RUNTIME = 'runtime-' + V;
 const PRECACHE = [

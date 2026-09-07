@@ -1951,7 +1951,7 @@ async function openPeoplePick() {
     b.type = 'button';
     b.innerHTML = '<img loading="lazy" src="/api/faces/' + (p.coverFaceId || '') + '/crop"><span>' + escapeHtml(p.name || 'Fără nume') + ' · ' + p.n + '</span>';
     b.onclick = async () => {
-      if (!confirm('Unești persoana curentă în „' + (p.name || 'Fără nume') + '"?')) return;
+      if (!(await confirmBox('Unești persoana curentă în „' + (p.name || 'Fără nume') + '"?', 'Unește'))) return;
       try {
         await api('/api/people/' + cur.personId + '/merge', { method: 'POST', body: { into: p.id } });
         $('peoplePick').hidden = true;
@@ -2808,27 +2808,34 @@ function confirmDanger({ title, message, word, confirmLabel }) {
     $('dangerTitle').textContent = title;
     $('dangerMsg').textContent = message;
     $('dangerConfirm').textContent = confirmLabel || 'Confirmă';
-    $('dangerConfirm').disabled = true;
     const input = $('dangerInput');
+    const needWord = !!word;
+    input.hidden = !needWord;
     input.value = '';
-    input.placeholder = word;
+    input.placeholder = word || '';
+    $('dangerConfirm').disabled = needWord;
     modal.hidden = false;
-    setTimeout(() => input.focus(), 50);
+    if (needWord) setTimeout(() => input.focus(), 50);
 
     const onInput = () => { $('dangerConfirm').disabled = input.value.trim().toUpperCase() !== word.toUpperCase(); };
     const cleanup = () => {
       modal.hidden = true;
+      input.hidden = false;
       input.removeEventListener('input', onInput);
       input.removeEventListener('keydown', onKey);
       $('dangerConfirm').onclick = null;
       $('dangerCancel').onclick = null;
     };
     const onKey = (e) => { if (e.key === 'Enter' && !$('dangerConfirm').disabled) { cleanup(); resolve(true); } };
-    input.addEventListener('input', onInput);
-    input.addEventListener('keydown', onKey);
+    if (needWord) { input.addEventListener('input', onInput); input.addEventListener('keydown', onKey); }
     $('dangerConfirm').onclick = () => { cleanup(); resolve(true); };
     $('dangerCancel').onclick = () => { cleanup(); resolve(false); };
   });
+}
+
+// Confirmare simplă în aplicație (window.confirm nu merge în PWA pe unele telefoane).
+function confirmBox(message, confirmLabel) {
+  return confirmDanger({ title: 'Confirmare', message, confirmLabel: confirmLabel || 'Continuă' });
 }
 
 function toast(msg, opts) {
@@ -3089,10 +3096,17 @@ function wire() {
   };
   $('cmClose').onclick = () => { $('cmModal').hidden = true; };
   $('albumDelete').onclick = async () => {
-    if (!confirm('Ștergi albumul „' + cur.album.name + '”? Pozele rămân în galerie.')) return;
+    $('albumMenu').hidden = true;
+    const ok = await confirmDanger({
+      title: 'Ștergi albumul?',
+      message: 'Albumul „' + (cur.album ? cur.album.name : '') + '” se șterge. Pozele rămân în galerie.',
+      confirmLabel: 'Șterge albumul',
+    });
+    if (!ok) return;
     try {
       await api('/api/albums/' + cur.albumId, { method: 'DELETE' });
       await loadAlbums();
+      toast('Album șters');
       location.hash = '#/albums';
     } catch (e) { toast(e.message); }
   };
@@ -3126,8 +3140,8 @@ function wire() {
       try { document.execCommand('copy'); toast('Link copiat'); } catch { toast('Copiază manual'); }
     }
   };
-  $('shareRevoke').onclick = () => {
-    if (!confirm('Dezactivezi linkul? Nu va mai funcționa pentru nimeni.')) return;
+  $('shareRevoke').onclick = async () => {
+    if (!(await confirmBox('Dezactivezi linkul? Nu va mai funcționa pentru nimeni.', 'Dezactivează'))) return;
     revokeShare();
   };
   $('shareClose').onclick = () => { $('shareModal').hidden = true; };
@@ -3379,7 +3393,7 @@ function wire() {
   $('dupClose').onclick = () => { $('dupModal').hidden = true; };
   $('dupTrash').onclick = async () => {
     if (!dupSel.size) return;
-    if (!confirm('Muți ' + dupSel.size + ' duplicate în coș?')) return;
+    if (!(await confirmBox('Muți ' + dupSel.size + ' duplicate în coș?', 'Mută în coș'))) return;
     const ids = [...dupSel];
     for (const id of ids) { try { await api('/api/media/' + id + '/trash', { method: 'POST' }); } catch {} }
     $('dupModal').hidden = true;
@@ -3445,7 +3459,7 @@ function wire() {
   $('cleanupClose').onclick = () => { $('cleanupModal').hidden = true; };
   $('cleanupTrash').onclick = async () => {
     if (!cleanupSel.size) return;
-    if (!confirm('Muți ' + cleanupSel.size + ' elemente în coș?')) return;
+    if (!(await confirmBox('Muți ' + cleanupSel.size + ' elemente în coș?', 'Mută în coș'))) return;
     const ids = [...cleanupSel];
     for (const id of ids) { try { await api('/api/media/' + id + '/trash', { method: 'POST' }); } catch {} }
     $('cleanupModal').hidden = true;
@@ -3528,7 +3542,7 @@ function wire() {
     };
     $('personDismiss').onclick = async () => {
       $('personMenu').hidden = true;
-      if (!confirm('Marchezi gruparea asta ca „nu e o persoană"? Pozele rămân în galerie.')) return;
+      if (!(await confirmBox('Marchezi gruparea asta ca „nu e o persoană"? Pozele rămân în galerie.', 'Da'))) return;
       try { await api('/api/people/' + cur.personId, { method: 'DELETE' }); toast('Eliminată'); location.hash = '#/people'; }
       catch (e) { toast(e.message); }
     };
@@ -3722,7 +3736,7 @@ function wire() {
   };
   $('optClose').onclick = () => { stopOpt(); $('optModal').hidden = true; };
   $('optStart').onclick = async () => {
-    if (!confirm('Recompresie ireversibilă: originalele sunt înlocuite cu versiuni mai mici, practic identice vizual. Continui?')) return;
+    if (!(await confirmBox('Recompresie ireversibilă: originalele sunt înlocuite cu versiuni mai mici, practic identice vizual. Continui?', 'Continuă'))) return;
     $('optStart').disabled = true;
     $('optProgress').hidden = false;
     $('optBar').style.width = '2%';
