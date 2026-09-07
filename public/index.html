@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=83">
+  <link rel="stylesheet" href="/assets/styles.css?v=84">
 </head>
 <body>
   <div class="app">
@@ -33,7 +33,6 @@
         <a class="side-link" href="#/people" data-view="people"><span class="msi">groups</span><span class="lbl">Persoane</span></a>
         <a class="side-link" href="#/things" data-view="things"><span class="msi">category</span><span class="lbl">Lucruri</span></a>
         <a class="side-link" href="#/shares" data-view="shares"><span class="msi">group</span><span class="lbl">Partajări</span></a>
-        <a class="side-link" href="#/partner" data-view="partner" hidden><span class="msi">favorite</span><span class="lbl">Bibliotecă partajată</span></a>
         <div class="side-sep"></div>
         <a class="side-link" href="#/archive" data-view="archive"><span class="msi">inventory_2</span><span class="lbl">Arhivă</span></a>
         <a class="side-link" href="#/trash" data-view="trash"><span class="msi">delete</span><span class="lbl">Coș</span></a>
@@ -69,7 +68,7 @@
             <button class="menu-item theme-opt" data-theme="dark"><span class="msi">dark_mode</span>Întunecat</button>
             <button class="menu-item theme-opt" data-theme="system"><span class="msi">brightness_auto</span>Sistem</button>
             <div class="menu2-sep"></div>
-            <a id="adminLoginBtn" class="menu-item" href="/login"><span class="msi">login</span>Conectare / Cont nou</a>
+            <a id="adminLoginBtn" class="menu-item" href="/login"><span class="msi">login</span>Conectare</a>
             <div id="acctWho" class="menu2-label" hidden></div>
             <button id="accountBtn" class="menu-item" hidden><span class="msi">manage_accounts</span>Contul meu</button>
             <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Import Google Takeout</button>
@@ -185,7 +184,6 @@
               <button id="personAlbum" class="menu-item"><span class="msi">photo_album</span>Creează album cu persoana</button>
               <button id="personReview" class="menu-item"><span class="msi">how_to_reg</span>Confirmă fețele</button>
               <button id="personMerge" class="menu-item"><span class="msi">merge</span>Unește cu altă persoană…</button>
-              <button id="personLink" class="menu-item"><span class="msi">link</span>Leagă de un cont…</button>
               <button id="personPet" class="menu-item"><span class="msi">pets</span>Marchează ca animal</button>
               <button id="personHide" class="menu-item"><span class="msi">visibility_off</span>Ascunde persoana</button>
               <button id="personDismiss" class="menu-item"><span class="msi">person_off</span>Nu e o persoană</button>
@@ -222,7 +220,6 @@
                 <button id="albumContribToggle" class="menu-item"><span class="msi">add_photo_alternate</span>Permite adăugarea de poze<span class="mi-check msi">check</span></button>
                 <button id="albumModerate" class="menu-item"><span class="msi">forum</span>Vezi comentariile</button>
                 <button id="albumSlideshow" class="menu-item"><span class="msi">movie</span>Slideshow → video</button>
-                <button id="albumCollab" class="menu-item"><span class="msi">group_add</span>Colaboratori…</button>
                 <div class="menu2-sep"></div>
                 <button id="albumDelete" class="menu-item"><span class="msi">delete</span>Șterge album</button>
               </div>
@@ -444,55 +441,6 @@
       </div>
       <div id="accErr" class="lock-err" hidden></div>
 
-      <div class="acc-2fa">
-        <div class="acc-2fa-head">
-          <div>
-            <strong>Autentificare în doi pași</strong>
-            <p class="muted" id="acc2faStatus">Se încarcă…</p>
-          </div>
-          <button id="acc2faToggle" class="btn ghost" type="button">Activează</button>
-        </div>
-        <div id="acc2faSetup" class="acc-2fa-setup" hidden>
-          <p class="muted">Scanează codul cu Google Authenticator / Authy, apoi introdu codul de 6 cifre pentru confirmare.</p>
-          <img id="acc2faQr" alt="Cod QR 2FA" width="180" height="180">
-          <p class="muted acc-2fa-secret">Sau introdu manual: <code id="acc2faSecret"></code></p>
-          <input id="acc2faConfirmCode" type="text" inputmode="numeric" maxlength="6" placeholder="123456">
-          <div class="modal-actions">
-            <button id="acc2faConfirm" class="btn primary" type="button">Confirmă</button>
-            <button id="acc2faCancel" class="btn" type="button">Anulează</button>
-          </div>
-        </div>
-        <div id="acc2faBackup" class="acc-2fa-setup" hidden>
-          <p class="muted">Coduri de rezervă (folosește-le dacă pierzi accesul la aplicația de autentificare — fiecare merge o singură dată). Salvează-le acum, nu se mai arată din nou.</p>
-          <div id="acc2faBackupList" class="acc-2fa-codes"></div>
-          <div class="modal-actions"><button id="acc2faBackupDone" class="btn primary" type="button">Am salvat codurile</button></div>
-        </div>
-        <div id="acc2faDisable" class="acc-2fa-setup" hidden>
-          <p class="muted">Introdu parola contului pentru a dezactiva 2FA.</p>
-          <input id="acc2faDisablePw" type="password" placeholder="Parolă" autocomplete="current-password">
-          <div class="modal-actions">
-            <button id="acc2faDisableConfirm" class="btn primary" type="button">Dezactivează</button>
-            <button id="acc2faDisableCancel" class="btn" type="button">Anulează</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="acc-2fa">
-        <div class="acc-2fa-head">
-          <div>
-            <strong>Partener (bibliotecă partajată)</strong>
-            <p class="muted" id="accPartnerStatus">Vezi și pozele altui cont într-o filă separată.</p>
-          </div>
-        </div>
-        <div id="accPartnerForm" class="acc-file">
-          <input id="accPartnerUser" type="text" maxlength="60" placeholder="Utilizatorul partenerului" autocapitalize="none">
-          <button id="accPartnerLink" class="btn ghost" type="button"><span class="msi">link</span>Asociază</button>
-        </div>
-        <div id="accPartnerLinked" class="acc-file" hidden>
-          <button id="accPartnerUnlink" class="btn ghost danger" type="button"><span class="msi">link_off</span>Desfă asocierea</button>
-        </div>
-      </div>
-
       <div class="modal-actions">
         <span id="accUser" class="muted"></span>
         <span><button id="accSave" class="btn primary">Salvează</button>
@@ -680,10 +628,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=83"></script>
-  <script src="/assets/veditor.js?v=83"></script>
-  <script src="/assets/scanner.js?v=83"></script>
-  <script src="/assets/app.js?v=83"></script>
-  <script src="/assets/pwa.js?v=83"></script>
+  <script src="/assets/editor.js?v=84"></script>
+  <script src="/assets/veditor.js?v=84"></script>
+  <script src="/assets/scanner.js?v=84"></script>
+  <script src="/assets/app.js?v=84"></script>
+  <script src="/assets/pwa.js?v=84"></script>
 </body>
 </html>

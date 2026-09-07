@@ -1,15 +1,14 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const FLAT = ['all', 'highlights', 'archive', 'trash', 'locked', 'partner'];
-const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș', locked: 'Folder blocat', partner: 'Bibliotecă partajată' };
+const FLAT = ['all', 'highlights', 'archive', 'trash', 'locked'];
+const TITLES = { all: 'Poze', highlights: 'Favorite', archive: 'Arhivă', trash: 'Coș', locked: 'Folder blocat' };
 const EMPTY = {
   all: 'Nicio poză încă.',
   highlights: 'Nicio favorită. Apasă ⭐ pe o poză.',
   archive: 'Arhiva e goală.',
   trash: 'Coșul e gol.',
   locked: 'Folderul blocat e gol. Mută aici poze din selecție.',
-  partner: 'Partenerul nu are încă poze încărcate.',
 };
 // Niveluri de zoom pe grilă (ca la Google Photos): mare → confortabil → compact → mic
 const ZOOM = [
@@ -24,7 +23,6 @@ const ZOOM_LABEL = ['Mare', 'Confortabil', 'Compact', 'Mic', 'An'];
 let csrf = '';
 let media = [];
 let archiveList = [];
-let partnerList = [];
 let trashList = [];
 let lockedList = [];
 let lockOpen = false;
@@ -115,7 +113,6 @@ async function loadAll() {
   try { collections = await api('/api/memories/collections'); } catch { collections = []; }
 }
 async function loadArchive() { archiveList = await api('/api/media?filter=archive'); }
-async function loadPartner() { partnerList = await api('/api/media?filter=partner'); }
 async function loadTrash() { trashList = await api('/api/media?filter=trash'); }
 async function loadAlbums() { albums = await api('/api/albums'); }
 async function loadAlbum(id) {
@@ -273,9 +270,6 @@ function route() {
     cur.view = 'highlights'; showView(); renderGrid();
   } else if (h === '/archive') {
     cur.view = 'archive'; showView(); loadArchive().then(renderGrid);
-  } else if (h === '/partner') {
-    if (!(me && me.partner)) { location.hash = '#/'; return; }
-    cur.view = 'partner'; showView(); loadPartner().then(renderGrid);
   } else if (h === '/trash') {
     if (!isAdmin) { location.hash = '#/'; return; }
     cur.view = 'trash'; showView(); loadTrash().then(renderGrid);
@@ -299,8 +293,6 @@ function showView() {
 }
 
 function updateNav() {
-  const pl = document.querySelector('.side-link[data-view="partner"]');
-  if (pl) pl.hidden = !(me && me.partner);
   document.querySelectorAll('.side-link').forEach((a) => {
     const v = a.dataset.view;
     const on = v === cur.view || (v === 'albums' && cur.view === 'album');
@@ -595,7 +587,6 @@ function gridData() {
   let base;
   if (cur.view === 'highlights') base = media.filter((m) => m.favorite);
   else if (cur.view === 'archive') base = archiveList;
-  else if (cur.view === 'partner') base = partnerList;
   else base = media;
   return applyFilters(applySearch(base));
 }
@@ -2874,31 +2865,9 @@ function wireAccount() {
     $('accAvatar').src = me.avatar + '?t=' + Date.now();
     $('accUser').textContent = '@' + me.username;
     $('accErr').hidden = true;
-    resetAcc2fa();
-    render2faStatus();
-    renderPartner();
     acc.hidden = false;
   };
   $('accClose').onclick = () => { acc.hidden = true; };
-  if ($('accPartnerLink')) $('accPartnerLink').onclick = async () => {
-    const uname = $('accPartnerUser').value.trim();
-    if (!uname) return;
-    try {
-      const d = await api('/api/account/partner', { method: 'POST', body: { username: uname } });
-      me.partner = d.partner; me.partnerId = d.partner && d.partner.id;
-      $('accPartnerUser').value = '';
-      renderPartner(); updateNav();
-      toast('Asociat cu ' + (d.partner.displayName || d.partner.username));
-    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
-  };
-  if ($('accPartnerUnlink')) $('accPartnerUnlink').onclick = async () => {
-    try {
-      await api('/api/account/partner', { method: 'DELETE' });
-      me.partner = null; me.partnerId = null;
-      renderPartner(); updateNav();
-      toast('Asociere desfăcută');
-    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
-  };
   $('accAvatarBtn').onclick = () => $('accAvatarInput').click();
   $('accAvatarInput').addEventListener('change', async () => {
     const file = $('accAvatarInput').files[0];
@@ -2930,73 +2899,8 @@ function wireAccount() {
       toast('Salvat');
     } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
   };
-  wire2fa();
 }
 
-function renderPartner() {
-  if (!$('accPartnerForm')) return;
-  const p = me && me.partner;
-  $('accPartnerForm').hidden = !!p;
-  $('accPartnerLinked').hidden = !p;
-  $('accPartnerStatus').textContent = p
-    ? 'Asociat cu ' + (p.displayName || p.username) + ' (@' + p.username + '). Vezi pozele lui în „Bibliotecă partajată".'
-    : 'Vezi și pozele altui cont într-o filă separată.';
-}
-
-function render2faStatus() {
-  $('acc2faStatus').textContent = me.totpEnabled ? 'Activată.' : 'Dezactivată — recomandat pentru un cont cu poze reale.';
-  $('acc2faToggle').textContent = me.totpEnabled ? 'Dezactivează' : 'Activează';
-}
-function resetAcc2fa() {
-  $('acc2faSetup').hidden = true;
-  $('acc2faBackup').hidden = true;
-  $('acc2faDisable').hidden = true;
-  $('acc2faConfirmCode').value = '';
-  $('acc2faDisablePw').value = '';
-}
-function wire2fa() {
-  $('acc2faToggle').onclick = async () => {
-    $('accErr').hidden = true;
-    if (me.totpEnabled) {
-      resetAcc2fa();
-      $('acc2faDisable').hidden = false;
-      return;
-    }
-    try {
-      const d = await api('/api/account/2fa/setup', { method: 'POST' });
-      resetAcc2fa();
-      $('acc2faQr').src = d.qr;
-      $('acc2faSecret').textContent = d.secret;
-      $('acc2faSetup').hidden = false;
-    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
-  };
-  $('acc2faCancel').onclick = () => resetAcc2fa();
-  $('acc2faConfirm').onclick = async () => {
-    const code = $('acc2faConfirmCode').value.trim();
-    if (!/^\d{6}$/.test(code)) { $('accErr').textContent = 'Codul trebuie să aibă 6 cifre'; $('accErr').hidden = false; return; }
-    try {
-      const d = await api('/api/account/2fa/confirm', { method: 'POST', body: { code } });
-      me.totpEnabled = true;
-      render2faStatus();
-      resetAcc2fa();
-      $('acc2faBackupList').innerHTML = d.backupCodes.map((c) => '<div>' + c + '</div>').join('');
-      $('acc2faBackup').hidden = false;
-      toast('Autentificare în doi pași activată');
-    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
-  };
-  $('acc2faBackupDone').onclick = () => resetAcc2fa();
-  $('acc2faDisableCancel').onclick = () => resetAcc2fa();
-  $('acc2faDisableConfirm').onclick = async () => {
-    const password = $('acc2faDisablePw').value;
-    try {
-      await api('/api/account/2fa/disable', { method: 'POST', body: { password } });
-      me.totpEnabled = false;
-      render2faStatus();
-      resetAcc2fa();
-      toast('Autentificare în doi pași dezactivată');
-    } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
-  };
-}
 
 // ─── Notificări push ────────────────────────────────────────────────────────
 let pushConfig = null;
@@ -3583,7 +3487,6 @@ function wire() {
     document.addEventListener('click', () => { $('personMenu').hidden = true; });
     $('personCover').onclick = () => { $('personMenu').hidden = true; toast('Apasă ⌗ pe poza dorită'); };
     $('personMerge').onclick = () => openPeoplePick();
-    $('personLink').onclick = () => openLinkAccount();
     if ($('personAlbum')) $('personAlbum').onclick = async () => {
       $('personMenu').hidden = true;
       try {
@@ -3618,8 +3521,8 @@ function wire() {
       catch (e) { toast(e.message); }
     };
     $('peoplePickClose').onclick = () => { $('peoplePick').hidden = true; };
-    $('linkAccountClose').onclick = () => { $('linkAccountModal').hidden = true; };
-    $('linkAccountNone').onclick = async () => {
+    if ($('linkAccountClose')) $('linkAccountClose').onclick = () => { $('linkAccountModal').hidden = true; };
+    if ($('linkAccountNone')) $('linkAccountNone').onclick = async () => {
       try {
         const d = await api('/api/people/' + cur.personId, { method: 'PATCH', body: { linkedUserId: null } });
         curPerson = d.person;

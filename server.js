@@ -31,19 +31,20 @@ const optimize = require('./lib/optimize');
 const push = require('./lib/push');
 
 const PORT = Number(process.env.PORT) || 3000;
-const PASSWORD_HASH = process.env.PASSWORD_HASH || ''; // parola de administrator
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 2048;
 const STORAGE_LIMIT_GB = Number(process.env.STORAGE_LIMIT_GB) || 0;
 const COMMENT_WEBHOOK = process.env.COMMENT_WEBHOOK || '';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
 
-if (!PASSWORD_HASH || !SESSION_SECRET) {
-  console.error('\n  Lipsește PASSWORD_HASH sau SESSION_SECRET.');
-  console.error('  Rulează:  npm run set-password -- PAROLA_TA\n');
+// Cele două conturi fixe ale aplicației.
+const ACCOUNT_PASSWORD = process.env.ACCOUNT_PASSWORD || 'acsraideri';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'nuimipasa';
+const ACCOUNT_ID = '5106e84f-f4c1-4fc6-8d16-8a310a7321aa';
+const ADMIN_ID = '11363169-ac4e-4a7c-95cd-9b892a90f45e';
+
+if (!SESSION_SECRET) {
+  console.error('\n  Lipsește SESSION_SECRET în .env\n');
   process.exit(1);
 }
 
@@ -329,15 +330,13 @@ const loginLimiter = rateLimit({
 });
 
 // ─── Conturi ──────────────────────────────────────────────────────────────
-const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
 const AVATAR_DIR = path.join(THUMB_DIR, 'avatars');
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
-const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe conturi de la acest IP' } });
 const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, totp_enabled, partner_id FROM users WHERE id = ?').get(req.session.userId);
+  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId);
   if (!u) return null;
   u.own_uploads = u.is_admin ? 1 : (await db.prepare('SELECT 1 v FROM media WHERE uploader_id = ? AND deleted_at IS NULL LIMIT 1').get(u.id)) ? 1 : 0;
   return u;
@@ -346,219 +345,25 @@ function pubUser(u) {
   if (!u) return null;
   return {
     id: u.id, username: u.username, displayName: u.display_name,
-    hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin, totpEnabled: !!u.totp_enabled,
+    hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin,
     canMakeAlbum: !!(u.is_admin || u.own_uploads),
-    partnerId: u.partner_id || null,
     avatar: '/api/users/' + u.id + '/avatar',
   };
 }
-async function pubUserFull(req) {
-  const u = await currentUser(req);
-  if (!u) return null;
-  const out = pubUser(u);
-  if (u.partner_id) {
-    const p = await db.prepare('SELECT id, username, display_name FROM users WHERE id = ?').get(u.partner_id);
-    out.partner = p ? { id: p.id, username: p.username, displayName: p.display_name } : null;
-  } else out.partner = null;
-  return out;
-}
 function requireAccount(req, res, next) {
   if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
-  return res.status(401).json({ error: 'creează-ți un cont sau conectează-te' });
+  return res.status(401).json({ error: 'conectează-te' });
 }
-
-app.post('/api/register', registerLimiter, express.json({ limit: '4kb' }), async (req, res) => {
-  const b = req.body || {};
-  const username = String(b.username || '').trim();
-  const password = String(b.password || '');
-  const displayName = String(b.displayName || username).trim().replace(/\s+/g, ' ').slice(0, 40) || username;
-  if (!USERNAME_RE.test(username)) return res.status(400).json({ error: 'utilizator: 3–24 caractere (litere, cifre, . _ -)' });
-  if (password.length < 6) return res.status(400).json({ error: 'parola: minim 6 caractere' });
-  if (await db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'utilizatorul există deja' });
-  const first = (await db.prepare('SELECT COUNT(*) n FROM users').get()).n === 0;
-  const id = crypto.randomUUID();
-  await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, username, await bcrypt.hash(password, 10), displayName, first ? 1 : 0, new Date().toISOString());
-  req.session.regenerate(async (err) => {
-    if (err) return res.status(500).json({ error: 'eroare server' });
-    req.session.authed = true;
-    req.session.userId = id;
-    req.session.displayName = displayName;
-    req.session.role = first ? 'admin' : 'user';
-    req.session.csrf = crypto.randomBytes(32).toString('hex');
-    const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    req.session.save(() => res.json({ ok: true, user: pubUser(u) }));
-  });
-});
-
-// ─── Autentificare cu Google (OAuth2, fără librărie) ──────────────────────
-const GOOGLE_ON = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
-app.get('/api/auth/config', (req, res) => res.json({ google: GOOGLE_ON }));
-
-function googleRedirectUri(req) {
-  return GOOGLE_REDIRECT_URI || ('https://' + req.get('host') + '/auth/google/callback');
-}
-
-app.get('/auth/google', (req, res) => {
-  if (!GOOGLE_ON) return res.redirect('/login?e=google-off');
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.oauthState = state;
-  req.session.save(() => {
-    const p = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: googleRedirectUri(req),
-      response_type: 'code',
-      scope: 'openid email profile',
-      state,
-      prompt: 'select_account',
-    });
-    res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + p.toString());
-  });
-});
-
-app.get('/auth/google/callback', async (req, res) => {
-  if (!GOOGLE_ON) return res.redirect('/login?e=google-off');
-  const { code, state, error } = req.query;
-  if (error || !code) return res.redirect('/login?e=google-cancel');
-  if (!state || state !== req.session.oauthState) return res.redirect('/login?e=state');
-  delete req.session.oauthState;
-  try {
-    const tokRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code: String(code),
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: googleRedirectUri(req),
-        grant_type: 'authorization_code',
-      }),
-      signal: AbortSignal.timeout(12000),
-    });
-    const tok = await tokRes.json();
-    if (!tokRes.ok || !tok.id_token) throw new Error('token');
-    // id_token vine direct de la endpointul Google (server-la-server) -> decodăm payload-ul
-    const payload = JSON.parse(Buffer.from(tok.id_token.split('.')[1], 'base64url').toString('utf8'));
-    if (!payload.sub || payload.aud !== GOOGLE_CLIENT_ID) throw new Error('aud');
-    const gid = String(payload.sub);
-    const email = String(payload.email || '');
-    const name = String(payload.name || email.split('@')[0] || 'Utilizator').slice(0, 40);
-
-    let u = (await db.prepare('SELECT * FROM users WHERE google_id = ?').get(gid))
-      || (email && (await db.prepare('SELECT * FROM users WHERE email = ? AND google_id IS NULL').get(email)));
-    if (u) {
-      if (!u.google_id) await db.prepare('UPDATE users SET google_id = ? WHERE id = ?').run(gid, u.id);
-      // sincronizează numele afișat cu contul Google la fiecare conectare
-      if (name && name !== u.display_name) {
-        await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
-        await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
-        u.display_name = name;
-      }
-    } else {
-      const first = (await db.prepare('SELECT COUNT(*) n FROM users').get()).n === 0;
-      let uname = (email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 20) || 'user';
-      if (uname.length < 3) uname = 'user' + uname;
-      let base = uname, i = 1;
-      while (await db.prepare('SELECT 1 FROM users WHERE username = ?').get(uname)) uname = base + (++i);
-      const id = crypto.randomUUID();
-      await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, google_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, uname, '', name, first ? 1 : 0, gid, email || null, new Date().toISOString());
-      u = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    }
-
-    // preia poza de profil din contul Google la fiecare conectare (o suprascrie mereu)
-    if (payload.picture) {
-      try {
-        const pr = await fetch(payload.picture, { signal: AbortSignal.timeout(8000) });
-        if (pr.ok) {
-          const buf = Buffer.from(await pr.arrayBuffer());
-          await require('sharp')(buf, { failOn: 'none' }).resize(200, 200, { fit: 'cover' }).webp({ quality: 82 })
-            .toFile(path.join(AVATAR_DIR, u.id + '.webp'));
-          if (!u.has_avatar) await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
-        }
-      } catch { /* fără poză */ }
-    }
-
-    req.session.regenerate((err2) => {
-      if (err2) return res.redirect('/login?e=session');
-      req.session.authed = true;
-      req.session.userId = u.id;
-      req.session.displayName = u.display_name;
-      req.session.role = u.is_admin ? 'admin' : 'user';
-      req.session.csrf = crypto.randomBytes(32).toString('hex');
-      req.session.save(() => res.redirect('/'));
-    });
-  } catch (e) {
-    console.error('google oauth:', e.message);
-    res.redirect('/login?e=google-fail');
-  }
-});
 
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
-  const username = String(req.body && req.body.username || '').trim();
+  const username = String(req.body && req.body.username || '').trim().toLowerCase();
   const password = String(req.body && req.body.password || '');
-
-  // Cont de utilizator
-  if (username) {
-    const u = await db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-    let ok = false;
-    try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
-    if (!ok) return res.status(401).json({ error: 'utilizator sau parolă greșită' });
-    if (u.totp_enabled) {
-      req.session.pending2fa = u.id;
-      return req.session.save(() => res.json({ ok: true, need2fa: true }));
-    }
-    return req.session.regenerate((err) => {
-      if (err) return res.status(500).json({ error: 'eroare server' });
-      req.session.authed = true;
-      req.session.userId = u.id;
-      req.session.displayName = u.display_name;
-      req.session.role = u.is_admin ? 'admin' : 'user';
-      req.session.csrf = crypto.randomBytes(32).toString('hex');
-      req.session.save(() => res.json({ ok: true, role: req.session.role, user: pubUser(u) }));
-    });
-  }
-
-  // Parola veche de administrator (fără utilizator)
+  // Fără utilizator (sau orice altceva) => contul standard. „admin" => contul de administrator.
+  const wantAdmin = username === 'admin';
+  const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(wantAdmin ? ADMIN_ID : ACCOUNT_ID);
   let ok = false;
-  try { ok = await bcrypt.compare(password, PASSWORD_HASH); } catch { ok = false; }
+  try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
   if (!ok) return res.status(401).json({ error: 'parolă greșită' });
-  req.session.regenerate((err) => {
-    if (err) return res.status(500).json({ error: 'eroare server' });
-    req.session.authed = true;
-    req.session.role = 'admin';
-    req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.save(() => res.json({ ok: true, role: 'admin' }));
-  });
-});
-
-app.get('/api/me', async (req, res) => res.json({ user: await pubUserFull(req), role: req.session && req.session.role || 'guest' }));
-
-// ─── Autentificare în doi pași (TOTP) ──────────────────────────────────────
-const totp = require('./lib/totp');
-const twofaLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false, message: { error: 'prea multe încercări, reîncearcă mai târziu' } });
-
-app.post('/api/login/2fa', twofaLimiter, express.json({ limit: '4kb' }), async (req, res) => {
-  const uid = req.session && req.session.pending2fa;
-  if (!uid) return res.status(400).json({ error: 'nicio autentificare în curs' });
-  const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
-  if (!u || !u.totp_enabled) return res.status(400).json({ error: 'nicio autentificare în curs' });
-  const code = String((req.body && req.body.code) || '').trim();
-  let ok = totp.verifyTotp(u.totp_secret, code);
-  if (!ok) {
-    // acceptă și un cod de rezervă (o singură dată)
-    let codes = [];
-    try { codes = JSON.parse(u.totp_backup_codes || '[]'); } catch { codes = []; }
-    const norm = code.replace(/\s+/g, '').toLowerCase();
-    const idx = codes.findIndex((h) => h === crypto.createHash('sha256').update(norm).digest('hex'));
-    if (idx !== -1) {
-      ok = true;
-      codes.splice(idx, 1);
-      await db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(JSON.stringify(codes), u.id);
-    }
-  }
-  if (!ok) return res.status(401).json({ error: 'cod greșit' });
-  delete req.session.pending2fa;
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
@@ -570,41 +375,7 @@ app.post('/api/login/2fa', twofaLimiter, express.json({ limit: '4kb' }), async (
   });
 });
 
-app.post('/api/account/2fa/setup', requireAccount, checkCsrf, async (req, res) => {
-  const u = await currentUser(req);
-  if (!u) return res.status(400).json({ error: 'niciun cont' });
-  const secret = totp.randomBase32Secret();
-  req.session.pendingTotpSecret = secret;
-  const url = totp.otpauthURL({ secret, label: u.username, issuer: 'Cloud' });
-  const qr = await QRCode.toDataURL(url, { margin: 1, width: 220 });
-  req.session.save(() => res.json({ secret, qr }));
-});
-
-app.post('/api/account/2fa/confirm', requireAccount, checkCsrf, jsonBody, async (req, res) => {
-  const u = await currentUser(req);
-  const secret = req.session && req.session.pendingTotpSecret;
-  if (!u || !secret) return res.status(400).json({ error: 'pornește mai întâi configurarea' });
-  const code = String((req.body && req.body.code) || '');
-  if (!totp.verifyTotp(secret, code)) return res.status(401).json({ error: 'cod greșit' });
-  const backup = totp.genBackupCodes();
-  const hashed = backup.map((c) => crypto.createHash('sha256').update(c).digest('hex'));
-  await db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_backup_codes = ? WHERE id = ?')
-    .run(secret, JSON.stringify(hashed), u.id);
-  delete req.session.pendingTotpSecret;
-  req.session.save(() => res.json({ ok: true, backupCodes: backup }));
-});
-
-app.post('/api/account/2fa/disable', requireAccount, checkCsrf, jsonBody, async (req, res) => {
-  const cu = await currentUser(req);
-  if (!cu) return res.status(400).json({ error: 'niciun cont' });
-  const u = await db.prepare('SELECT id, pass_hash FROM users WHERE id = ?').get(cu.id);
-  const password = String((req.body && req.body.password) || '');
-  let ok = false;
-  try { ok = u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
-  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
-  await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0, totp_backup_codes = NULL WHERE id = ?').run(u.id);
-  res.json({ ok: true });
-});
+app.get('/api/me', async (req, res) => res.json({ user: pubUser(await currentUser(req)), role: req.session && req.session.role || 'guest' }));
 
 app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) => {
   const u = await currentUser(req);
@@ -615,28 +386,6 @@ app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) 
   await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
   req.session.displayName = name;
   res.json({ ok: true, user: pubUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
-});
-
-// ─── Partener (bibliotecă partajată) ──────────────────────────────────────
-app.post('/api/account/partner', requireAccount, checkCsrf, jsonBody, async (req, res) => {
-  const u = await currentUser(req);
-  if (!u) return res.status(400).json({ error: 'niciun cont' });
-  const uname = String((req.body && req.body.username) || '').trim().toLowerCase();
-  if (!uname) return res.status(400).json({ error: 'scrie utilizatorul partenerului' });
-  const other = await db.prepare('SELECT id, username, display_name FROM users WHERE LOWER(username) = ?').get(uname);
-  if (!other) return res.status(404).json({ error: 'nu există un cont cu acest utilizator' });
-  if (other.id === u.id) return res.status(400).json({ error: 'nu te poți asocia cu tine' });
-  // rupem eventualele asocieri vechi ale ambilor, apoi legăm reciproc
-  await db.prepare('UPDATE users SET partner_id = NULL WHERE partner_id IN (?, ?)').run(u.id, other.id);
-  await db.prepare('UPDATE users SET partner_id = ? WHERE id = ?').run(other.id, u.id);
-  await db.prepare('UPDATE users SET partner_id = ? WHERE id = ?').run(u.id, other.id);
-  res.json({ ok: true, partner: { id: other.id, username: other.username, displayName: other.display_name } });
-});
-app.delete('/api/account/partner', requireAccount, checkCsrf, async (req, res) => {
-  const u = await currentUser(req);
-  if (!u) return res.status(400).json({ error: 'niciun cont' });
-  if (u.partner_id) await db.prepare('UPDATE users SET partner_id = NULL WHERE id IN (?, ?)').run(u.id, u.partner_id);
-  res.json({ ok: true });
 });
 
 app.post('/api/account/avatar', requireAccount, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
@@ -1173,13 +922,6 @@ app.get('/api/media', requireAuth, async (req, res) => {
   else if (f === 'screenshots') where = live + " AND kind_auto = 'screenshot'";
   else if (f === 'selfies') where = live + " AND kind_auto = 'selfie'";
   else if (f === 'geo') where = live + ' AND lat IS NOT NULL';
-  else if (f === 'partner') {
-    const cu = await currentUser(req);
-    const pid = cu && cu.partner_id;
-    if (!pid) return res.json([]);
-    const rows = await db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${live} AND uploader_id = ? ${order}`).all(pid);
-    return res.json(rows.map(mapRow));
-  }
   else where = live;
 
   const rows = await db.prepare(`SELECT ${MEDIA_COLS} FROM media WHERE ${where} ${order}`).all();
@@ -2135,10 +1877,7 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get('/register', (req, res) => {
-  if (req.session && req.session.authed) return res.redirect('/');
-  res.sendFile(path.join(__dirname, 'public', 'register.html'));
-});
+app.get('/register', (req, res) => res.redirect('/login'));
 
 app.get('/', requireAuthPage, (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -2181,7 +1920,34 @@ app.use((err, req, res, next) => {
   if (!res.headersSent) res.status(500).json({ error: 'eroare server' });
 });
 
+// Menține exact cele două conturi fixe (contul standard + administratorul).
+async function ensureAccounts() {
+  const now = new Date().toISOString();
+  const set = async (id, username, name, isAdmin, plainPass) => {
+    const hash = await bcrypt.hash(plainPass, 10);
+    const ex = await db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+    if (ex) {
+      await db.prepare('UPDATE users SET username = ?, pass_hash = ?, is_admin = ?, google_id = NULL, email = NULL, totp_secret = NULL, totp_enabled = 0, totp_backup_codes = NULL, partner_id = NULL WHERE id = ?')
+        .run(username, hash, isAdmin ? 1 : 0, id);
+    } else {
+      await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, username, hash, name, isAdmin ? 1 : 0, now);
+    }
+  };
+  await set(ACCOUNT_ID, 'acsraideri', 'Cont', false, ACCOUNT_PASSWORD);
+  await set(ADMIN_ID, 'admin', 'Administrator', true, ADMIN_PASSWORD);
+  // Orice alt cont vechi: mută proprietatea albumelor pe contul standard, apoi șterge-l.
+  const extra = await db.prepare('SELECT id FROM users WHERE id NOT IN (?, ?)').all(ACCOUNT_ID, ADMIN_ID);
+  for (const e of extra) {
+    await db.prepare('UPDATE albums SET owner_id = ?, owner_name = ? WHERE owner_id = ?').run(ACCOUNT_ID, 'Cont', e.id);
+    await db.prepare('UPDATE media SET uploader_id = ? WHERE uploader_id = ?').run(ACCOUNT_ID, e.id);
+    try { await db.prepare('UPDATE face_clusters SET linked_user_id = NULL WHERE linked_user_id = ?').run(e.id); } catch {}
+    await db.prepare('DELETE FROM users WHERE id = ?').run(e.id);
+  }
+}
+
 db.ready().then(async () => {
+  await ensureAccounts();
   await joblog.sweep();
   await purgeTrash();
   setInterval(() => { purgeTrash().catch((e) => console.error('purge:', e)); }, 6 * 60 * 60 * 1000).unref();

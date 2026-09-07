@@ -1,16 +1,14 @@
 'use strict';
 // Versiunea trebuie bumpată odată cu assets (?v=N)
-const V = 'v83';
+const V = 'v84';
 const SHELL = 'shell-' + V;
 const RUNTIME = 'runtime-' + V;
 const PRECACHE = [
   '/',
   '/login',
-  '/register',
   '/assets/styles.css?v=' + V,
   '/assets/app.js?v=' + V,
   '/assets/login.js?v=' + V,
-  '/assets/register.js?v=' + V,
   '/assets/theme-init.js',
   '/assets/pwa.js?v=' + V,
   '/assets/icon-192.png',
