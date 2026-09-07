@@ -37,6 +37,7 @@ let collections = [];
 let stats = null;
 let isAdmin = false;
 let me = null;
+let profile = null;   // identitatea publică a galeriei (contul standard)
 let query = '';
 let filterType = 'all';
 let filterFav = false;
@@ -69,6 +70,7 @@ let slideTimer = null;
     csrf = info.token;
     isAdmin = info.role === 'admin';
     me = info.user || null;
+    profile = info.profile || null;
   } catch {
     return location.replace('/login');
   }
@@ -2862,10 +2864,16 @@ function wireAccount() {
     e.stopPropagation();
     $('acctMenu').hidden = true;
     if (!me) { location.href = '/login'; return; }
-    $('accName').value = me.displayName;
-    $('accAvatar').src = me.avatar + '?t=' + Date.now();
+    const p = profile || { displayName: me.displayName, avatar: me.avatar };
+    $('accName').value = p.displayName || '';
+    $('accAvatar').src = p.avatar + '?t=' + Date.now();
     $('accUser').textContent = '@' + me.username;
     $('accErr').hidden = true;
+    // Numele și poza se schimbă doar din contul de administrator.
+    $('accName').readOnly = !isAdmin;
+    $('accAvatarBtn').hidden = !isAdmin;
+    $('accSave').hidden = !isAdmin;
+    $('accEditNote').hidden = isAdmin;
     acc.hidden = false;
   };
   $('accClose').onclick = () => { acc.hidden = true; };
@@ -2879,8 +2887,11 @@ function wireAccount() {
       const r = await fetch('/api/account/avatar', { method: 'POST', headers: { 'x-csrf-token': csrf }, body: fd });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'a eșuat');
-      me.hasAvatar = true;
+      if (profile) { profile.hasAvatar = true; profile.avatar = d.avatar.split('?')[0]; }
       $('accAvatar').src = d.avatar;
+      await loadAlbums();
+      if (cur.view === 'albums') renderAlbums();
+      if (cur.view === 'album') renderAlbum();
       applyRole();
       toast('Poză salvată');
     } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
@@ -2891,12 +2902,12 @@ function wireAccount() {
     if (!name) { $('accErr').textContent = 'Numele nu poate fi gol'; $('accErr').hidden = false; return; }
     try {
       const d = await api('/api/account', { method: 'PATCH', body: { displayName: name } });
-      me = d.user;
-      applyRole();
+      profile = d.profile || profile;
       acc.hidden = true;
       await loadAlbums();
       if (cur.view === 'albums') renderAlbums();
       if (cur.view === 'album') renderAlbum();
+      applyRole();
       toast('Salvat');
     } catch (e) { $('accErr').textContent = e.message; $('accErr').hidden = false; }
   };

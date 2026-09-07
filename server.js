@@ -351,6 +351,17 @@ function pubUser(u) {
     avatar: '/api/users/' + u.id + '/avatar',
   };
 }
+// Identitatea „publică" a galeriei = contul standard. Se afișează ca autor
+// de albume; o poate schimba doar administratorul.
+async function accountProfile() {
+  const row = await db.prepare('SELECT display_name, has_avatar FROM users WHERE id = ?').get(ACCOUNT_ID);
+  return {
+    displayName: row ? row.display_name : 'Cont',
+    hasAvatar: !!(row && row.has_avatar),
+    avatar: '/api/users/' + ACCOUNT_ID + '/avatar',
+  };
+}
+
 function requireAccount(req, res, next) {
   if (req.session && (req.session.userId || req.session.role === 'admin')) return next();
   return res.status(401).json({ error: 'conectează-te' });
@@ -376,27 +387,28 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   });
 });
 
-app.get('/api/me', async (req, res) => res.json({ user: pubUser(await currentUser(req)), role: req.session && req.session.role || 'guest' }));
+app.get('/api/me', async (req, res) => res.json({
+  user: pubUser(await currentUser(req)),
+  role: req.session && req.session.role || 'guest',
+  profile: await accountProfile(),
+  canEditProfile: !!(req.session && req.session.role === 'admin'),
+}));
 
-app.patch('/api/account', requireAccount, checkCsrf, jsonBody, async (req, res) => {
-  const u = await currentUser(req);
-  if (!u) return res.status(400).json({ error: 'niciun cont' });
+app.patch('/api/account', requireAdmin, checkCsrf, jsonBody, async (req, res) => {
   const name = String((req.body && req.body.displayName) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
   if (!name) return res.status(400).json({ error: 'nume gol' });
-  await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, u.id);
-  await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, u.id);
-  req.session.displayName = name;
-  res.json({ ok: true, user: pubUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
+  await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, ACCOUNT_ID);
+  await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, ACCOUNT_ID);
+  res.json({ ok: true, profile: await accountProfile() });
 });
 
-app.post('/api/account/avatar', requireAccount, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
-  const u = await currentUser(req);
-  if (!u || !req.file) { if (req.file) try { fs.rmSync(req.file.path, { force: true }); } catch {} return res.status(400).json({ error: 'lipsește imaginea' }); }
+app.post('/api/account/avatar', requireAdmin, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'lipsește imaginea' });
   try {
     await require('sharp')(req.file.path, { failOn: 'none' }).rotate()
-      .resize(200, 200, { fit: 'cover' }).webp({ quality: 82 }).toFile(path.join(AVATAR_DIR, u.id + '.webp'));
-    await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(u.id);
-    res.json({ ok: true, avatar: '/api/users/' + u.id + '/avatar?t=' + Date.now() });
+      .resize(200, 200, { fit: 'cover' }).webp({ quality: 82 }).toFile(path.join(AVATAR_DIR, ACCOUNT_ID + '.webp'));
+    await db.prepare('UPDATE users SET has_avatar = 1 WHERE id = ?').run(ACCOUNT_ID);
+    res.json({ ok: true, avatar: '/api/users/' + ACCOUNT_ID + '/avatar?t=' + Date.now() });
   } catch (e) { res.status(400).json({ error: 'imagine invalidă' }); }
   finally { try { fs.rmSync(req.file.path, { force: true }); } catch {} }
 });
@@ -405,7 +417,7 @@ app.get('/api/users/:id/avatar', async (req, res) => {
   const u = await db.prepare('SELECT id, display_name, has_avatar FROM users WHERE id = ?').get(String(req.params.id));
   const p = u && u.has_avatar ? path.join(AVATAR_DIR, u.id + '.webp') : null;
   if (p && fs.existsSync(p)) {
-    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('Cache-Control', 'public, max-age=120');
     res.type('image/webp');
     return fs.createReadStream(p).pipe(res);
   }
@@ -413,7 +425,7 @@ app.get('/api/users/:id/avatar', async (req, res) => {
   const nm = (u && u.display_name || '?').trim();
   const ini = nm.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?';
   const hue = [...nm].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  res.set('Cache-Control', 'public, max-age=3600');
+  res.set('Cache-Control', 'public, max-age=120');
   res.type('image/svg+xml');
   res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="hsl(' + hue + ',45%,55%)"/><text x="100" y="100" dy="0.35em" font-family="Roboto,sans-serif" font-size="88" fill="#fff" text-anchor="middle">' + ini + '</text></svg>');
 });
@@ -428,7 +440,8 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/csrf', async (req, res) => {
   if (!req.session.csrf) req.session.csrf = crypto.randomBytes(32).toString('hex');
   const u = await currentUser(req);
-  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(u) }));
+  const profile = await accountProfile();
+  req.session.save(() => res.json({ token: req.session.csrf, role: req.session.role || 'guest', user: pubUser(u), profile, canEditProfile: req.session.role === 'admin' }));
 });
 
 // ─── Notificări push (browser) ─────────────────────────────────────────────
