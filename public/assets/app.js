@@ -38,6 +38,7 @@ let stats = null;
 let isAdmin = false;
 let me = null;
 let profile = null;   // identitatea publică a galeriei (contul standard)
+let gpJobId = null;   // import Google Photos în curs (ca să te poți reatașa)
 let query = '';
 let filterType = 'all';
 let filterFav = false;
@@ -3637,15 +3638,24 @@ function wire() {
   const stopPoll = () => { if (importTimer) { clearInterval(importTimer); importTimer = null; } };
   function openImportModal() {
     $('acctMenu').hidden = true;
-    $('gpUrl').value = '';
-    $('gpProgress').hidden = true;
-    $('gpStart').disabled = false;
     $('importProgress').hidden = true;
     if ($('importFile')) $('importFile').value = '';
     if ($('importStart')) $('importStart').disabled = false;
     if ($('importZipWrap')) $('importZipWrap').hidden = !isAdmin;
     $('importModal').hidden = false;
-    setTimeout(() => $('gpUrl').focus(), 50);
+    if (gpJobId) {
+      // reatașează-te la importul care rulează deja
+      $('gpProgress').hidden = false;
+      $('gpStart').disabled = true;
+      $('gpStat').textContent = 'Se reia urmărirea…';
+      pollGphotos(gpJobId);
+    } else {
+      $('gpUrl').value = '';
+      $('gpProgress').hidden = true;
+      $('gpNote').hidden = true;
+      $('gpStart').disabled = false;
+      setTimeout(() => $('gpUrl').focus(), 50);
+    }
   }
   $('importBtn').onclick = (e) => { e.stopPropagation(); openImportModal(); };
   if ($('linkImportBtn')) $('linkImportBtn').onclick = (e) => {
@@ -3655,35 +3665,26 @@ function wire() {
   };
   $('importClose').onclick = () => { stopPoll(); $('importModal').hidden = true; };
 
-  $('gpStart').onclick = async () => {
-    const url = $('gpUrl').value.trim();
-    if (!/^https?:\/\/(photos\.app\.goo\.gl\/|photos\.google\.com\/share\/|goo\.gl\/photos\/)/i.test(url)) {
-      return toast('Pune un link photos.app.goo.gl/… sau photos.google.com/share/…');
-    }
-    $('gpStart').disabled = true;
-    $('gpProgress').hidden = false;
-    $('gpBar').style.width = '4%';
-    $('gpStat').textContent = 'Se deschide linkul…';
-    let jobId;
-    try {
-      const d = await api('/api/import/gphotos', { method: 'POST', body: { url } });
-      jobId = d.jobId;
-    } catch (e) { $('gpStat').textContent = e.message; $('gpStart').disabled = false; return; }
+  function pollGphotos(jobId) {
     stopPoll();
+    let misses = 0;
     importTimer = setInterval(async () => {
       let j;
-      try { j = await api('/api/import/gphotos/status/' + jobId); } catch { return; }
-      const PH = { starting: 'Se pregătește…', fetch: 'Se citește albumul…', download: 'Se descarcă', album: 'Se face albumul…', done: 'Gata', error: 'Eroare' };
+      try { j = await api('/api/import/gphotos/status/' + jobId); misses = 0; }
+      catch { if (++misses > 8) { stopPoll(); gpJobId = null; } return; }
+      const PH = { starting: 'Se pregătește…', fetch: 'Se citește albumul…', download: 'Se descarcă', done: 'Gata', error: 'Eroare' };
       const pct = j.total ? 8 + (j.done / j.total) * 88 : (j.phase === 'done' ? 100 : 8);
       $('gpBar').style.width = Math.min(100, pct).toFixed(1) + '%';
       const bits = [PH[j.phase] || j.phase];
       if (j.total) bits.push(j.done + '/' + j.total);
       if (j.added) bits.push('+' + j.added);
-      if (j.duplicates) bits.push(j.duplicates + ' dubluri');
+      if (j.duplicates) bits.push(j.duplicates + ' existau deja');
       $('gpStat').textContent = bits.join('  ·  ');
+      $('gpNote').hidden = !(j.phase === 'download' || j.phase === 'fetch');
       if (j.phase === 'done' || j.phase === 'error') {
-        stopPoll();
+        stopPoll(); gpJobId = null;
         $('gpStart').disabled = false;
+        $('gpNote').hidden = true;
         if (j.phase === 'done') {
           toast('Import gata: +' + j.added + (j.duplicates ? ', ' + j.duplicates + ' existau deja' : '') + ' — album „' + (j.albumName || '') + '"');
           await loadAll(); await loadAlbums();
@@ -3694,7 +3695,22 @@ function wire() {
           $('gpStat').textContent = 'Eroare: ' + (j.errors && j.errors[j.errors.length - 1] || 'necunoscută');
         }
       }
-    }, 1500);
+    }, 2000);
+  }
+  $('gpStart').onclick = async () => {
+    const url = $('gpUrl').value.trim();
+    if (!/^https?:\/\/(photos\.app\.goo\.gl\/|photos\.google\.com\/share\/|goo\.gl\/photos\/)/i.test(url)) {
+      return toast('Pune un link photos.app.goo.gl/… sau photos.google.com/share/…');
+    }
+    $('gpStart').disabled = true;
+    $('gpProgress').hidden = false;
+    $('gpBar').style.width = '4%';
+    $('gpStat').textContent = 'Se deschide linkul…';
+    try {
+      const d = await api('/api/import/gphotos', { method: 'POST', body: { url } });
+      gpJobId = d.jobId;
+    } catch (e) { $('gpStat').textContent = e.message; $('gpStart').disabled = false; return; }
+    pollGphotos(gpJobId);
   };
   $('importStart').onclick = () => {
     const file = $('importFile').files[0];
