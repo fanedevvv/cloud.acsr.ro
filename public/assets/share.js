@@ -255,7 +255,7 @@ function show() {
     im.dataset.full = base + '/media/' + it.id + '/full';
     lbStage.appendChild(im);
   }
-  lbDl.href = base + '/media/' + it.id + '/full';
+  lbDl.href = base + '/media/' + it.id + '/download';
   lbDl.setAttribute('download', it.originalName || it.id);
   $('lbCount').textContent = (lbIndex + 1) + ' / ' + items.length;
   renderLbSocial();

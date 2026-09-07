@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=82">
+  <link rel="stylesheet" href="/assets/styles.css?v=83">
 </head>
 <body>
   <div class="app">
@@ -208,7 +208,9 @@
         <div class="album-head">
           <button id="albumBack" class="icon-btn2" aria-label="Înapoi"><span class="msi">arrow_back</span></button>
           <div class="album-head-actions">
-            <button id="albumAdd" class="btn ghost"><span class="msi">add_photo_alternate</span>Adaugă</button>
+            <button id="albumUpload" class="btn ghost"><span class="msi">upload</span>Încarcă în album</button>
+            <input type="file" id="albumUploadInput" accept="image/*,video/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.rw2,.orf,.raf" multiple hidden>
+            <button id="albumAdd" class="btn ghost"><span class="msi">add_photo_alternate</span>Adaugă existente</button>
             <button id="albumShare" class="btn ghost"><span class="msi">share</span>Partajează</button>
             <div class="acct">
               <button id="albumMenuBtn" class="icon-btn2" aria-label="Mai multe"><span class="msi">more_vert</span></button>
@@ -678,10 +680,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=82"></script>
-  <script src="/assets/veditor.js?v=82"></script>
-  <script src="/assets/scanner.js?v=82"></script>
-  <script src="/assets/app.js?v=82"></script>
-  <script src="/assets/pwa.js?v=82"></script>
+  <script src="/assets/editor.js?v=83"></script>
+  <script src="/assets/veditor.js?v=83"></script>
+  <script src="/assets/scanner.js?v=83"></script>
+  <script src="/assets/app.js?v=83"></script>
+  <script src="/assets/pwa.js?v=83"></script>
 </body>
 </html>

@@ -924,6 +924,10 @@ function renderAlbum() {
   const ct = $('albumCommentsToggle'), cc = $('albumContribToggle');
   if (ct) ct.classList.toggle('on', a.allowComments !== false);
   if (cc) cc.classList.toggle('on', !!a.allowContrib);
+  // Album automat de persoană: se completează singur, fără adăugare manuală.
+  const auto = !!a.autoPersonClusterId;
+  if ($('albumUpload')) $('albumUpload').hidden = auto;
+  if ($('albumAdd')) $('albumAdd').hidden = auto;
   buildGallery($('albumGrid'), cur.items);
   $('albumEmpty').hidden = cur.items.length > 0;
 }
@@ -1014,16 +1018,9 @@ function albumCard(a) {
     e.preventDefault(); e.stopPropagation();
     card.classList.remove('drop-on');
     const files = [...e.dataTransfer.files];
-    const before = new Set(media.map((m) => m.id));
-    await uploadFiles(files);
-    const fresh = media.filter((m) => !before.has(m.id)).map((m) => m.id);
-    if (fresh.length) {
-      try {
-        const d = await api('/api/albums/' + a.id + '/items', { method: 'POST', body: { ids: fresh } });
-        await loadAlbums(); renderAlbums();
-        toast(d.added + ' adăugate în „' + a.name + '"');
-      } catch (err) { toast(err.message); }
-    }
+    const ids = await uploadFiles(files, { albumId: a.id });
+    await loadAlbums(); renderAlbums();
+    if (ids && ids.length) toast(ids.length + ' adăugate în „' + a.name + '"');
   });
   return card;
 }
@@ -2237,7 +2234,7 @@ function showLb() {
     lbStage.appendChild(im);
     if (it.liveVideoId) setupLivePhoto(it);
   }
-  lbDl.href = '/media/' + it.id + '/full';
+  lbDl.href = '/media/' + it.id + '/download';
   lbDl.setAttribute('download', it.originalName || it.id);
 
   const trash = cur.view === 'trash';
@@ -2717,7 +2714,8 @@ async function shrinkForUpload(file) {
   return new File([bytes], name, { type: 'image/jpeg', lastModified: file.lastModified });
 }
 
-async function uploadFiles(files) {
+async function uploadFiles(files, opts) {
+  opts = opts || {};
   $('uploadTray').hidden = false;
   const list = $('uploadList');
   const rows = files.map((f) => {
@@ -2741,11 +2739,13 @@ async function uploadFiles(files) {
   // depășesc timeout-ul serverului (erau 408-uri). Fiecare poză primește
   // toată banda și se termină cât de repede permite conexiunea.
   let ok = 0;
+  const newIds = [];
   for (let i = 0; i < files.length; i++) {
     $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
     try {
       const f = await shrinkForUpload(files[i]).catch(() => files[i]);
-      await uploadOne(f, rows[i].fill);
+      const id = await uploadOne(f, rows[i].fill);
+      if (id) newIds.push(id);
       rows[i].li.classList.add('ok');
       ok++;
     } catch (e) {
@@ -2754,10 +2754,26 @@ async function uploadFiles(files) {
       rows[i].li.title = e && e.message ? e.message : 'eșuat';
     }
   }
-  $('uploadTitle').textContent = 'Gata — ' + ok + '/' + files.length + ' încărcate';
+
+  let added = 0;
+  if (opts.albumId && newIds.length) {
+    try {
+      const d = await api('/api/albums/' + opts.albumId + '/items', { method: 'POST', body: { ids: newIds } });
+      added = d.added || 0;
+    } catch (e) { toast(e.message); }
+  }
+  $('uploadTitle').textContent = opts.albumId
+    ? 'Gata — ' + added + ' adăugate în album'
+    : 'Gata — ' + ok + '/' + files.length + ' încărcate';
+
   await loadAll();
   await loadAlbums();
+  if (opts.albumId && cur.view === 'album' && cur.albumId === opts.albumId) {
+    await loadAlbum(opts.albumId);
+    renderAlbum();
+  }
   rerender();
+  return newIds;
 }
 
 function uploadOne(file, fill) {
@@ -2774,12 +2790,14 @@ function uploadOne(file, fill) {
       if (xhr.status === 401) return location.replace('/login');
       if (xhr.status < 200 || xhr.status >= 300) return reject(new Error('HTTP ' + xhr.status));
       fill.style.width = '100%';
+      let id = null;
       try {
         const res = JSON.parse(xhr.responseText);
         const first = res.items && res.items[0];
         if (first && first.error) return reject(new Error(first.error));
+        if (first && first.id) id = first.id;
       } catch { /* fără JSON */ }
-      resolve();
+      resolve(id);
     });
     xhr.addEventListener('error', () => reject(new Error('rețea')));
     xhr.send(fd);
@@ -3128,6 +3146,14 @@ function wire() {
     } catch (e) { toast(e.message); }
   };
   $('albumBack').onclick = () => { location.hash = '#/albums'; };
+  if ($('albumUpload')) {
+    $('albumUpload').onclick = () => $('albumUploadInput').click();
+    $('albumUploadInput').addEventListener('change', () => {
+      const files = [...$('albumUploadInput').files];
+      $('albumUploadInput').value = '';
+      if (files.length && cur.albumId) uploadFiles(files, { albumId: cur.albumId });
+    });
+  }
   $('albumAdd').onclick = () => openPicker();
   $('albumShare').onclick = () => openShareModal('album', cur.albumId);
 

@@ -45,7 +45,7 @@ function sizeStr(n) {
   }
 
   const dl = $('dl');
-  dl.href = base + '/full';
+  dl.href = base + '/download';
   dl.setAttribute('download', d.originalName || 'descarcare');
   dl.hidden = false;
 

@@ -294,6 +294,31 @@ function sendFull(row, res) {
   });
 }
 
+// Extensia corectă pentru un mime — folosită ca să nu descărcăm un fișier
+// „poza.jpg" care de fapt e alt format (ex. optimizat cândva în webp).
+const MIME_EXT = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+  'image/avif': '.avif', 'image/heic': '.heic', 'image/heif': '.heif', 'image/tiff': '.tif',
+  'image/bmp': '.bmp', 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
+  'video/x-matroska': '.mkv', 'video/x-msvideo': '.avi',
+};
+function downloadFilename(row) {
+  let name = (row.original_name || row.stored_name || row.id).trim();
+  const ext = MIME_EXT[String(row.mime || '').toLowerCase()];
+  if (ext && !name.toLowerCase().endsWith(ext)) name = name.replace(/\.[^.]+$/, '') + ext;
+  return name.replace(/[\r\n"\\]/g, '_') || (row.id + (ext || ''));
+}
+function sendOriginalDownload(row, res) {
+  const full = path.join(ORIGINAL_DIR, row.stored_name);
+  if (!fs.existsSync(full)) return res.status(404).end();
+  const name = downloadFilename(row);
+  res.type(row.mime || 'application/octet-stream');
+  res.set('Content-Disposition',
+    `attachment; filename="${name.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.sendFile(full, { acceptRanges: true, dotfiles: 'deny', headers: { 'Cache-Control': 'private, max-age=86400' } },
+    (err) => { if (err && !res.headersSent) res.status(err.status || 500).end(); });
+}
+
 // ─── Login / logout ─────────────────────────────────────────────────────────
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -1387,7 +1412,7 @@ app.get('/api/download', requireAuth, async (req, res) => {
   for (const r of rows) {
     const full = path.join(ORIGINAL_DIR, r.stored_name);
     if (!fs.existsSync(full)) continue;
-    let name = r.original_name || r.stored_name;
+    let name = downloadFilename(r);
     if (used.has(name)) {
       const dot = name.lastIndexOf('.');
       const base = dot > 0 ? name.slice(0, dot) : name;
@@ -1537,6 +1562,7 @@ async function mediaServeGuard(req, res, next) {
 }
 app.get('/media/:id/thumb', requireAuth, mediaServeGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/media/:id/full', requireAuth, mediaServeGuard, (req, res) => sendFull(req.mediaRow, res));
+app.get('/media/:id/download', requireAuth, mediaServeGuard, (req, res) => sendOriginalDownload(req.mediaRow, res));
 app.get('/media/:id/preview', requireAuth, mediaServeGuard, (req, res) => {
   const p = path.join(THUMB_DIR, req.mediaRow.id + '.preview.webp');
   if (fs.existsSync(p)) {
@@ -2021,6 +2047,7 @@ async function shareMediaGuard(req, res, next) {
 
 app.get('/s/:token/media/:id/thumb', shareLimiter, shareMediaGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/s/:token/media/:id/full', shareLimiter, shareMediaGuard, (req, res) => sendFull(req.mediaRow, res));
+app.get('/s/:token/media/:id/download', shareLimiter, shareMediaGuard, (req, res) => sendOriginalDownload(req.mediaRow, res));
 app.get('/s/:token/media/:id/preview', shareLimiter, shareMediaGuard, (req, res) => {
   const p = path.join(THUMB_DIR, req.mediaRow.id + '.preview.webp');
   if (fs.existsSync(p)) { res.set('Cache-Control', 'public, max-age=86400'); res.type('image/webp'); return fs.createReadStream(p).pipe(res); }
@@ -2093,6 +2120,7 @@ async function sharePhotoGuard(req, res, next) {
 }
 app.get('/p/:token/thumb', shareLimiter, sharePhotoGuard, (req, res) => sendThumb(req.mediaRow, res));
 app.get('/p/:token/full', shareLimiter, sharePhotoGuard, (req, res) => sendFull(req.mediaRow, res));
+app.get('/p/:token/download', shareLimiter, sharePhotoGuard, (req, res) => sendOriginalDownload(req.mediaRow, res));
 
 app.get('/p/:token', shareLimiter, async (req, res) => {
   res.set('X-Robots-Tag', 'noindex, nofollow');
@@ -2175,8 +2203,9 @@ db.ready().then(async () => {
     setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
     setInterval(() => { backfillPreviews().catch(() => {}); }, 15 * 60 * 1000).unref();
     setInterval(() => { backfillBlur().catch(() => {}); }, 15 * 60 * 1000).unref();
-    setTimeout(() => { backfillOptimize().catch(() => {}); }, 90 * 1000);
-    setInterval(() => { backfillOptimize().catch(() => {}); }, 10 * 60 * 1000).unref();
+    // Recompresia automată a originalelor a fost oprită: descărcarea trebuie
+    // să dea fișierul original, la calitate deplină. „Optimizează spațiul"
+    // din meniu (POST /api/optimize) rămâne disponibilă manual.
     const sweepUploadTmp = () => {
       try {
         const cutoff = Date.now() - 2 * 60 * 60 * 1000;
