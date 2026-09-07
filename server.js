@@ -339,7 +339,6 @@ async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
   const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId);
   if (!u) return null;
-  u.own_uploads = u.is_admin ? 1 : (await db.prepare('SELECT 1 v FROM media WHERE uploader_id = ? AND deleted_at IS NULL LIMIT 1').get(u.id)) ? 1 : 0;
   return u;
 }
 function pubUser(u) {
@@ -347,7 +346,7 @@ function pubUser(u) {
   return {
     id: u.id, username: u.username, displayName: u.display_name,
     hasAvatar: !!u.has_avatar, isAdmin: !!u.is_admin,
-    canMakeAlbum: !!(u.is_admin || u.own_uploads),
+    canMakeAlbum: true,
     avatar: '/api/users/' + u.id + '/avatar',
   };
 }
@@ -849,7 +848,6 @@ app.post('/api/people/:cid/album', requireAccount, checkCsrf, jsonBody, async (r
   const cl = await db.prepare('SELECT id, name FROM face_clusters WHERE id = ?').get(cid);
   if (!cl) return res.status(404).json({ error: 'nu există' });
   const u = await currentUser(req);
-  if (u && !u.own_uploads) return res.status(403).json({ error: 'poți face un album doar după ce încarci propriile poze' });
   const existing = await db.prepare('SELECT * FROM albums WHERE auto_person_cluster_id = ?').get(cid);
   if (existing) return res.json(await albumSummary(existing));
   const id = crypto.randomUUID();
@@ -1473,10 +1471,6 @@ app.post('/api/albums', requireAccount, checkCsrf, jsonBody, async (req, res) =>
   const name = String(req.body && req.body.name || '').trim().slice(0, 120);
   if (!name) return res.status(400).json({ error: 'nume gol' });
   const u = await currentUser(req);
-  // Poți face un album doar dacă ai poze puse de tine (admin-ul e scutit).
-  if (!u || !u.own_uploads) {
-    return res.status(403).json({ error: 'poți face un album doar după ce încarci propriile poze' });
-  }
   const id = crypto.randomUUID();
   await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, new Date().toISOString(), u ? u.id : null, u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'));
