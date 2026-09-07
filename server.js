@@ -2025,7 +2025,8 @@ db.ready().then(async () => {
     };
     sweepUploadTmp();
     setInterval(sweepUploadTmp, 60 * 60 * 1000).unref();
-    setTimeout(() => { try { search.warm(); } catch {} }, 8000); // pre-încarcă modelul CLIP
+    // pre-încarcă modelul CLIP doar dacă e permis (consumă ~700MB — pe VPS mic: ML_WARM=0)
+    if (process.env.ML_WARM !== '0') setTimeout(() => { try { search.warm(); } catch {} }, 8000);
   });
 }).catch((e) => {
   console.error('\n  Nu m-am putut conecta la MariaDB:', e && e.message ? e.message : e);
