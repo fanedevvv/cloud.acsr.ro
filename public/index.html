@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=84">
+  <link rel="stylesheet" href="/assets/styles.css?v=85">
 </head>
 <body>
   <div class="app">
@@ -60,6 +60,7 @@
         <button id="helpBtn" class="icon-btn2" aria-label="Scurtături" title="Scurtături de tastatură"><span class="msi">keyboard</span></button>
         <button id="camBtn" class="icon-btn2 only-mobile" aria-label="Fă o poză" title="Cameră"><span class="msi">photo_camera</span></button>
         <button id="uploadBtn" class="icon-btn2" aria-label="Încarcă" title="Încarcă"><span class="msi">upload</span></button>
+        <button id="linkImportBtn" class="icon-btn2" aria-label="Adaugă din Google Photos" title="Adaugă dintr-un link Google Photos"><span class="msi">add_link</span></button>
         <div class="acct">
           <button id="acctBtn" class="avatar" aria-label="Cont">C</button>
           <div id="acctMenu" class="menu2" hidden>
@@ -71,7 +72,7 @@
             <a id="adminLoginBtn" class="menu-item" href="/login"><span class="msi">login</span>Conectare</a>
             <div id="acctWho" class="menu2-label" hidden></div>
             <button id="accountBtn" class="menu-item" hidden><span class="msi">manage_accounts</span>Contul meu</button>
-            <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Import Google Takeout</button>
+            <button id="importBtn" class="menu-item"><span class="msi">cloud_download</span>Adaugă din Google Photos</button>
             <button id="optimizeBtn" class="menu-item"><span class="msi">compress</span>Optimizează spațiul</button>
             <button id="indexBtn" class="menu-item"><span class="msi">saved_search</span>Indexează pentru căutare</button>
             <button id="facesBtn" class="menu-item"><span class="msi">groups</span>Găsește persoane</button>
@@ -334,17 +335,33 @@
 
   <div id="importModal" class="modal" hidden>
     <div class="modal-card">
-      <h2>Import din Google Photos</h2>
-      <p class="muted">Alege un fișier <b>.zip</b> din exportul Google Takeout. Se păstrează data reală, favoritele și albumele. Poți importa fișierele pe rând.</p>
-      <input type="file" id="importFile" accept=".zip,application/zip,application/x-zip-compressed">
-      <div id="importProgress" class="import-prog" hidden>
-        <div class="bar"><div id="importBar" class="fill"></div></div>
-        <div id="importStat" class="muted"></div>
+      <h2>Adaugă din Google Photos</h2>
+      <label class="acc-lbl">Link către un album partajat</label>
+      <p class="muted">Lipește un link <b>photos.app.goo.gl/…</b> sau <b>photos.google.com/share/…</b>. Se descarcă toate pozele și clipurile la calitate maximă și se creează un album cu ele.</p>
+      <div class="share-row">
+        <input id="gpUrl" type="url" inputmode="url" placeholder="https://photos.app.goo.gl/…" autocomplete="off">
+        <button id="gpStart" class="btn primary">Importă</button>
       </div>
+      <div id="gpProgress" class="import-prog" hidden>
+        <div class="bar"><div id="gpBar" class="fill"></div></div>
+        <div id="gpStat" class="muted"></div>
+      </div>
+
+      <div id="importZipWrap" hidden>
+        <hr class="acc-sep">
+        <label class="acc-lbl">sau un fișier Google Takeout (.zip)</label>
+        <p class="muted">Se păstrează data reală, favoritele și albumele.</p>
+        <input type="file" id="importFile" accept=".zip,application/zip,application/x-zip-compressed">
+        <div id="importProgress" class="import-prog" hidden>
+          <div class="bar"><div id="importBar" class="fill"></div></div>
+          <div id="importStat" class="muted"></div>
+        </div>
+        <div class="modal-actions"><span></span><button id="importStart" class="btn">Importă .zip</button></div>
+      </div>
+
       <div class="modal-actions">
         <span></span>
-        <span><button id="importStart" class="btn primary">Importă</button>
-        <button id="importClose" class="btn">Închide</button></span>
+        <button id="importClose" class="btn">Închide</button>
       </div>
     </div>
   </div>
@@ -628,10 +645,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=84"></script>
-  <script src="/assets/veditor.js?v=84"></script>
-  <script src="/assets/scanner.js?v=84"></script>
-  <script src="/assets/app.js?v=84"></script>
-  <script src="/assets/pwa.js?v=84"></script>
+  <script src="/assets/editor.js?v=85"></script>
+  <script src="/assets/veditor.js?v=85"></script>
+  <script src="/assets/scanner.js?v=85"></script>
+  <script src="/assets/app.js?v=85"></script>
+  <script src="/assets/pwa.js?v=85"></script>
 </body>
 </html>

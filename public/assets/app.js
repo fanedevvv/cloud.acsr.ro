@@ -207,7 +207,8 @@ function applyRole() {
   hide('cleanupBtn', !isAdmin);
   hide('healthBtn', !isAdmin);
   hide('albumDelete', !isAdmin);
-  hide('importBtn', !isAdmin);
+  hide('importBtn', !me);
+  hide('linkImportBtn', !me);
   hide('logoutBtn', !(isAdmin || me));
   hide('adminLoginBtn', !!me);
   hide('accountBtn', !me);
@@ -3606,18 +3607,70 @@ function wire() {
     }, 1500);
   };
 
-  // ─── Import Google Takeout ───────────────────────────────────────────────
+  // ─── Import Google Photos (link) + Takeout (.zip) ───────────────────────
   let importTimer = null;
   const stopPoll = () => { if (importTimer) { clearInterval(importTimer); importTimer = null; } };
-  $('importBtn').onclick = (e) => {
-    e.stopPropagation();
+  function openImportModal() {
     $('acctMenu').hidden = true;
+    $('gpUrl').value = '';
+    $('gpProgress').hidden = true;
+    $('gpStart').disabled = false;
     $('importProgress').hidden = true;
-    $('importFile').value = '';
-    $('importStart').disabled = false;
+    if ($('importFile')) $('importFile').value = '';
+    if ($('importStart')) $('importStart').disabled = false;
+    if ($('importZipWrap')) $('importZipWrap').hidden = !isAdmin;
     $('importModal').hidden = false;
+    setTimeout(() => $('gpUrl').focus(), 50);
+  }
+  $('importBtn').onclick = (e) => { e.stopPropagation(); openImportModal(); };
+  if ($('linkImportBtn')) $('linkImportBtn').onclick = (e) => {
+    e.stopPropagation();
+    if (!me) { location.href = '/login'; return; }
+    openImportModal();
   };
   $('importClose').onclick = () => { stopPoll(); $('importModal').hidden = true; };
+
+  $('gpStart').onclick = async () => {
+    const url = $('gpUrl').value.trim();
+    if (!/^https?:\/\/(photos\.app\.goo\.gl\/|photos\.google\.com\/share\/|goo\.gl\/photos\/)/i.test(url)) {
+      return toast('Pune un link photos.app.goo.gl/… sau photos.google.com/share/…');
+    }
+    $('gpStart').disabled = true;
+    $('gpProgress').hidden = false;
+    $('gpBar').style.width = '4%';
+    $('gpStat').textContent = 'Se deschide linkul…';
+    let jobId;
+    try {
+      const d = await api('/api/import/gphotos', { method: 'POST', body: { url } });
+      jobId = d.jobId;
+    } catch (e) { $('gpStat').textContent = e.message; $('gpStart').disabled = false; return; }
+    stopPoll();
+    importTimer = setInterval(async () => {
+      let j;
+      try { j = await api('/api/import/gphotos/status/' + jobId); } catch { return; }
+      const PH = { starting: 'Se pregătește…', fetch: 'Se citește albumul…', download: 'Se descarcă', album: 'Se face albumul…', done: 'Gata', error: 'Eroare' };
+      const pct = j.total ? 8 + (j.done / j.total) * 88 : (j.phase === 'done' ? 100 : 8);
+      $('gpBar').style.width = Math.min(100, pct).toFixed(1) + '%';
+      const bits = [PH[j.phase] || j.phase];
+      if (j.total) bits.push(j.done + '/' + j.total);
+      if (j.added) bits.push('+' + j.added);
+      if (j.duplicates) bits.push(j.duplicates + ' dubluri');
+      $('gpStat').textContent = bits.join('  ·  ');
+      if (j.phase === 'done' || j.phase === 'error') {
+        stopPoll();
+        $('gpStart').disabled = false;
+        if (j.phase === 'done') {
+          toast('Import gata: +' + j.added + (j.duplicates ? ', ' + j.duplicates + ' existau deja' : '') + ' — album „' + (j.albumName || '') + '"');
+          await loadAll(); await loadAlbums();
+          $('importModal').hidden = true;
+          if (j.albumId) location.hash = '#/album/' + j.albumId;
+          else rerender();
+        } else {
+          $('gpStat').textContent = 'Eroare: ' + (j.errors && j.errors[j.errors.length - 1] || 'necunoscută');
+        }
+      }
+    }, 1500);
+  };
   $('importStart').onclick = () => {
     const file = $('importFile').files[0];
     if (!file) return toast('Alege un fișier .zip');

@@ -993,6 +993,7 @@ body.selecting .chk { opacity: 1; }
 .acc-row { display: flex; gap: 16px; align-items: flex-start; margin: 6px 0 8px; }
 .acc-avatar { width: 92px; height: 92px; border-radius: 50%; object-fit: cover; background: var(--surface-2); flex: none; }
 .acc-lbl { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 4px; }
+.acc-sep { border: 0; border-top: 1px solid var(--border); margin: 18px 0 12px; }
 #accName { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--border);
   border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; }
 .acc-file { margin-top: 10px; }

@@ -25,8 +25,9 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes, backfillExif, backfillPreviews, backfillBlur, backfillOptimize } = require('./lib/media');
+const { backfillHashes, backfillExif, backfillPreviews, backfillBlur, backfillOptimize, backfillDhash } = require('./lib/media');
 const takeout = require('./lib/takeout');
+const gphotos = require('./lib/gphotos');
 const optimize = require('./lib/optimize');
 const push = require('./lib/push');
 
@@ -1294,6 +1295,23 @@ app.get('/api/import/status/:id', requireAdmin, (req, res) => {
   res.json(job);
 });
 
+// ─── Import dintr-un link public Google Photos ──────────────────────────────
+app.post('/api/import/gphotos', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const url = String(req.body && req.body.url || '').trim();
+  if (!gphotos.isShareUrl(url)) return res.status(400).json({ error: 'pune un link de tip photos.app.goo.gl sau photos.google.com/share/…' });
+  const cu = await currentUser(req);
+  const job = gphotos.newJob();
+  job._log = await joblog.start('Import link Google Photos');
+  gphotos.runImport(url, job, cu ? cu.id : null).catch((e) => console.error('gphotos:', e));
+  res.json({ jobId: job.id });
+});
+
+app.get('/api/import/gphotos/status/:id', requireAccount, (req, res) => {
+  const job = gphotos.jobs.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'job necunoscut' });
+  res.json(job);
+});
+
 // ─── Servire fișiere (doar autentificat) ────────────────────────────────────
 async function mediaServeGuard(req, res, next) {
   const row = await getRow(req.params.id);
@@ -1961,6 +1979,7 @@ db.ready().then(async () => {
     setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
     setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
     setTimeout(() => { backfillBlur().catch((e) => console.error('blur:', e)); }, 30000);
+    setTimeout(() => { backfillDhash().catch((e) => console.error('dhash:', e)); }, 40000);
     setTimeout(() => {
       backup.checkIntegrity(ORIGINAL_DIR).catch(() => {});
       backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});
@@ -1969,6 +1988,7 @@ db.ready().then(async () => {
     setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
     setInterval(() => { backfillPreviews().catch(() => {}); }, 15 * 60 * 1000).unref();
     setInterval(() => { backfillBlur().catch(() => {}); }, 15 * 60 * 1000).unref();
+    setInterval(() => { backfillDhash().catch(() => {}); }, 20 * 60 * 1000).unref();
     // Recompresia automată a originalelor a fost oprită: descărcarea trebuie
     // să dea fișierul original, la calitate deplină. „Optimizează spațiul"
     // din meniu (POST /api/optimize) rămâne disponibilă manual.
