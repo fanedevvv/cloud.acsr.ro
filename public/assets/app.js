@@ -3643,19 +3643,20 @@ function wire() {
     if ($('importStart')) $('importStart').disabled = false;
     if ($('importZipWrap')) $('importZipWrap').hidden = !isAdmin;
     $('importModal').hidden = false;
-    if (gpJobId) {
-      // reatașează-te la importul care rulează deja
-      $('gpProgress').hidden = false;
-      $('gpStart').disabled = true;
-      $('gpStat').textContent = 'Se reia urmărirea…';
-      pollGphotos(gpJobId);
-    } else {
-      $('gpUrl').value = '';
-      $('gpProgress').hidden = true;
-      $('gpNote').hidden = true;
-      $('gpStart').disabled = false;
-      setTimeout(() => $('gpUrl').focus(), 50);
-    }
+    $('gpUrl').value = '';
+    $('gpProgress').hidden = true;
+    $('gpNote').hidden = true;
+    $('gpStart').disabled = false;
+    setTimeout(() => $('gpUrl').focus(), 50);
+    // dacă rulează deja un import (poate reluat după o repornire), reatașează-te
+    api('/api/import/gphotos/active').then((a) => {
+      if (a && a.active) {
+        $('gpProgress').hidden = false;
+        $('gpStart').disabled = true;
+        $('gpStat').textContent = 'Import în curs…';
+        pollGphotos(gpJobId || null);
+      }
+    }).catch(() => {});
   }
   $('importBtn').onclick = (e) => { e.stopPropagation(); openImportModal(); };
   if ($('linkImportBtn')) $('linkImportBtn').onclick = (e) => {
@@ -3667,11 +3668,18 @@ function wire() {
 
   function pollGphotos(jobId) {
     stopPoll();
-    let misses = 0;
+    let useActive = !jobId;
     importTimer = setInterval(async () => {
       let j;
-      try { j = await api('/api/import/gphotos/status/' + jobId); misses = 0; }
-      catch { if (++misses > 8) { stopPoll(); gpJobId = null; } return; }
+      try {
+        if (useActive) {
+          const a = await api('/api/import/gphotos/active');
+          if (!a.active) { stopPoll(); gpJobId = null; $('gpStart').disabled = false; $('gpNote').hidden = true; await loadAlbums(); if (cur.view === 'albums') renderAlbums(); return; }
+          j = a.job;
+        } else {
+          j = await api('/api/import/gphotos/status/' + jobId);
+        }
+      } catch { if (!useActive) { useActive = true; gpJobId = null; } return; }
       const PH = { starting: 'Se pregătește…', fetch: 'Se citește albumul…', download: 'Se descarcă', done: 'Gata', error: 'Eroare' };
       const pct = j.total ? 8 + (j.done / j.total) * 88 : (j.phase === 'done' ? 100 : 8);
       $('gpBar').style.width = Math.min(100, pct).toFixed(1) + '%';

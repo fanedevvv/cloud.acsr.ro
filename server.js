@@ -1323,6 +1323,19 @@ app.get('/api/import/gphotos/status/:id', requireAccount, (req, res) => {
   res.json(job);
 });
 
+// Importul curent (oricare ar fi id-ul lui) — util după o repornire a serverului.
+app.get('/api/import/gphotos/active', requireAccount, async (req, res) => {
+  const running = [...gphotos.jobs.values()].find((j) => j.phase !== 'done' && j.phase !== 'error');
+  if (running) return res.json({ active: true, job: running });
+  let a = null;
+  try { const raw = await getSetting('gphotos_active'); a = raw ? JSON.parse(raw) : null; } catch { a = null; }
+  if (a && a.albumId) {
+    const c = await db.prepare('SELECT COUNT(*) c FROM album_items WHERE album_id = ?').get(a.albumId);
+    return res.json({ active: true, job: { phase: 'download', done: c.c, total: a.total || 0, added: 0, duplicates: 0, errors: [], albumId: a.albumId, albumName: null } });
+  }
+  res.json({ active: false });
+});
+
 // ─── Servire fișiere (doar autentificat) ────────────────────────────────────
 async function mediaServeGuard(req, res, next) {
   const row = await getRow(req.params.id);
@@ -1975,6 +1988,8 @@ db.ready().then(async () => {
   await ensureAccounts();
   await joblog.sweep();
   await purgeTrash();
+  // reia un import Google Photos neterminat (după o repornire)
+  setTimeout(() => { gphotos.resumePending().catch((e) => console.error('gphotos resume:', e)); }, 45000);
   setInterval(() => { purgeTrash().catch((e) => console.error('purge:', e)); }, 6 * 60 * 60 * 1000).unref();
 
   app.listen(PORT, '127.0.0.1', () => {
