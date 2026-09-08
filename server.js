@@ -131,9 +131,7 @@ async function getAlbum(id) {
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
 async function getSharedAlbum(token) {
   if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
-  const a = await db.prepare('SELECT * FROM albums WHERE share_token = ?').get(token);
-  if (a && a.share_expires_at && a.share_expires_at < new Date().toISOString()) return null;
-  return a;
+  return db.prepare('SELECT * FROM albums WHERE share_token = ?').get(token);
 }
 
 const jsonBody = express.json({ limit: '256kb' });
@@ -160,7 +158,6 @@ async function getSharedPhoto(token) {
   if (!SHARE_TOKEN_RE.test(String(token || ''))) return null;
   const row = await db.prepare('SELECT * FROM media WHERE share_token = ?').get(token);
   if (!row || row.deleted_at || row.locked) return null;
-  if (row.share_expires_at && row.share_expires_at < new Date().toISOString()) return null;
   return row;
 }
 
@@ -198,10 +195,10 @@ async function albumSummary(a) {
       firstAt: dates[0] || null, lastAt: dates[dates.length - 1] || null,
       coverId: (a.cover_id && items.some((m) => m.id === a.cover_id)) ? a.cover_id : (items[0] ? items[0].id : null),
       shareToken: a.share_token || null,
-      shareExpiresAt: a.share_expires_at || null,
       allowComments: a.allow_comments == null ? true : !!a.allow_comments,
       allowContrib: false,
       autoPersonClusterId: a.auto_person_cluster_id,
+      hidden: !!a.hidden,
       owner: {
         id: a.owner_id || null,
         name: a.owner_name || 'Vizitator',
@@ -240,10 +237,10 @@ async function albumSummary(a) {
     lastAt: agg.lastAt || null,
     coverId,
     shareToken: a.share_token || null,
-    shareExpiresAt: a.share_expires_at || null,
     allowComments: a.allow_comments == null ? true : !!a.allow_comments,
     allowContrib: !!a.allow_contrib,
     autoPersonClusterId: null,
+    hidden: !!a.hidden,
     owner: {
       id: a.owner_id || null,
       name: a.owner_name || 'Vizitator',
@@ -1476,7 +1473,7 @@ app.delete('/api/media/:id', requireAdmin, checkCsrf, async (req, res) => {
 
 // ─── Albume ─────────────────────────────────────────────────────────────────
 app.get('/api/albums', requireAuth, async (req, res) => {
-  const rows = await db.prepare('SELECT * FROM albums ORDER BY created_at DESC').all();
+  const rows = await db.prepare('SELECT * FROM albums WHERE hidden = 0 OR share_token IS NOT NULL ORDER BY created_at DESC').all();
   res.json(await Promise.all(rows.map(albumSummary)));
 });
 
@@ -1588,11 +1585,9 @@ app.post('/api/albums/:id/share', requireAlbumOwner, checkCsrf, jsonBody, async 
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   const token = a.share_token || crypto.randomBytes(24).toString('base64url');
-  const days = Number(req.body && req.body.expiresInDays) || 0;
-  const exp = days > 0 ? new Date(Date.now() + days * 86400000).toISOString() : null;
-  await db.prepare('UPDATE albums SET share_token = ?, share_created_at = ?, share_expires_at = ? WHERE id = ?')
-    .run(token, a.share_created_at || new Date().toISOString(), exp, a.id);
-  res.json({ token, path: `/s/${token}`, expiresAt: exp });
+  await db.prepare('UPDATE albums SET share_token = ?, share_created_at = ?, share_expires_at = NULL WHERE id = ?')
+    .run(token, a.share_created_at || new Date().toISOString(), a.id);
+  res.json({ token, path: `/s/${token}` });
 });
 
 app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, async (req, res) => {
@@ -1692,11 +1687,9 @@ app.post('/api/media/:id/share', requireAccount, checkCsrf, jsonBody, async (req
   const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   const token = row.share_token || crypto.randomBytes(24).toString('base64url');
-  const days = Number(req.body && req.body.expiresInDays) || 0;
-  const exp = days > 0 ? new Date(Date.now() + days * 86400000).toISOString() : null;
-  await db.prepare('UPDATE media SET share_token = ?, share_created_at = ?, share_expires_at = ? WHERE id = ?')
-    .run(token, row.share_created_at || new Date().toISOString(), exp, row.id);
-  res.json({ token, path: `/p/${token}`, expiresAt: exp });
+  await db.prepare('UPDATE media SET share_token = ?, share_created_at = ?, share_expires_at = NULL WHERE id = ?')
+    .run(token, row.share_created_at || new Date().toISOString(), row.id);
+  res.json({ token, path: `/p/${token}` });
 });
 
 app.delete('/api/media/:id/share', requireAuth, checkCsrf, async (req, res) => {
@@ -1704,6 +1697,37 @@ app.delete('/api/media/:id/share', requireAuth, checkCsrf, async (req, res) => {
   if (!row) return res.status(404).json({ error: 'nu există' });
   await db.prepare('UPDATE media SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(row.id);
   res.json({ ok: true });
+});
+
+// Partajează o SELECȚIE de poze printr-un singur link (ca „Share" din Google
+// Photos): creează un album ascuns cu pozele alese și îi dă un share_token.
+app.post('/api/share/selection', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : [])
+    .filter((x) => UUID_RE.test(String(x))).slice(0, 500);
+  if (ids.length < 1) return res.status(400).json({ error: 'nicio poză selectată' });
+  const rows = await db.prepare(`SELECT id FROM media WHERE id IN (${ids.map(() => '?').join(',')}) AND deleted_at IS NULL AND locked = 0`).all(...ids);
+  if (!rows.length) return res.status(400).json({ error: 'poze invalide' });
+  const key = crypto.createHash('sha1').update([...ids].sort().join(',')).digest('hex');
+  const cu = await currentUser(req);
+
+  let a = await db.prepare('SELECT * FROM albums WHERE selection_key = ?').get(key);
+  if (!a) {
+    const id = crypto.randomUUID();
+    const now = new Date();
+    const nm = rows.length + (rows.length === 1 ? ' poză partajată' : ' poze partajate') + ' · '
+      + now.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' });
+    await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name, hidden, selection_key) VALUES (?, ?, ?, ?, ?, 1, ?)')
+      .run(id, nm, now.toISOString(), cu ? cu.id : null, cu ? cu.display_name : 'Cont', key);
+    const ins = db.prepare('INSERT IGNORE INTO album_items (album_id, media_id, added_at) VALUES (?, ?, ?)');
+    for (const r of rows) await ins.run(id, r.id, now.toISOString());
+    a = await db.prepare('SELECT * FROM albums WHERE id = ?').get(id);
+  }
+  const token = a.share_token || crypto.randomBytes(24).toString('base64url');
+  if (!a.share_token) {
+    await db.prepare('UPDATE albums SET share_token = ?, share_created_at = ? WHERE id = ?')
+      .run(token, new Date().toISOString(), a.id);
+  }
+  res.json({ token, path: `/s/${token}`, albumId: a.id, count: rows.length });
 });
 
 // ─── Partajare publică (fără login, doar citire) ────────────────────────────
@@ -1714,9 +1738,32 @@ const shareLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// „Membrii" unui link — cine l-a deschis (ca în Google Photos)
+function viewerKey(req, res) {
+  const raw = String(req.headers.cookie || '');
+  const m = raw.match(/(?:^|;\s*)sv=([a-f0-9]{16,40})(?:;|$)/);
+  let k = m ? m[1] : null;
+  if (!k) {
+    k = crypto.randomBytes(16).toString('hex');
+    res.cookie('sv', k, { maxAge: 400 * 86400000, httpOnly: true, sameSite: 'lax', secure: COOKIE_SECURE });
+  }
+  return k;
+}
+async function trackShareView(token, req, res, name) {
+  try {
+    const k = viewerKey(req, res);
+    const now = new Date().toISOString();
+    await db.prepare(`INSERT INTO share_views (token, viewer_key, name, first_at, last_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE last_at = VALUES(last_at), name = COALESCE(VALUES(name), name)`)
+      .run(String(token).slice(0, 64), k, name || null, now, now);
+  } catch { /* nu blocăm vizualizarea */ }
+}
+
 app.get('/api/s/:token', shareLimiter, async (req, res) => {
   const a = await getSharedAlbum(req.params.token);
   if (!a) return res.status(404).json({ error: 'link invalid' });
+  await trackShareView(req.params.token, req, res);
   const items = await albumItems(a);
   let coverId = null;
   if (a.cover_id && items.some((it) => it.id === a.cover_id)) coverId = a.cover_id;
@@ -1727,6 +1774,17 @@ app.get('/api/s/:token', shareLimiter, async (req, res) => {
     allowComments: a.allow_comments == null ? true : !!a.allow_comments,
     allowContrib: !!a.allow_contrib,
   });
+});
+
+// Pentru proprietar: cine a deschis linkul albumului
+app.get('/api/albums/:id/share-views', requireAlbumOwner, async (req, res) => {
+  const a = req.album || await getAlbum(req.params.id);
+  if (!a || !a.share_token) return res.json({ count: 0, viewers: [] });
+  const rows = await db.prepare(
+    'SELECT name, first_at, last_at FROM share_views WHERE token = ? ORDER BY last_at DESC LIMIT 200'
+  ).all(a.share_token);
+  const named = rows.filter((r) => r.name).map((r) => ({ name: r.name, lastAt: r.last_at }));
+  res.json({ count: rows.length, named });
 });
 
 // ─── Social pe albumul partajat: comentarii + reacții + contribuții ────────
@@ -1769,6 +1827,7 @@ app.post('/api/s/:token/comments', commentLimiter, express.json({ limit: '8kb' }
   }
   const row = { id: crypto.randomUUID(), album_id: a.id, media_id: mediaId, name, body: body || null, emoji, created_at: new Date().toISOString(), ip_hash: ipHash(req) };
   await db.prepare('INSERT INTO album_comments (id, album_id, media_id, name, body, emoji, created_at, ip_hash) VALUES (:id,:album_id,:media_id,:name,:body,:emoji,:created_at,:ip_hash)').run(row);
+  await trackShareView(req.params.token, req, res, name);
   const shareUrl = 'https://' + req.get('host') + '/s/' + encodeURIComponent(req.params.token);
   if (COMMENT_WEBHOOK) {
     const txt = '💬 ' + name + ' pe „' + a.name + '": ' + (body || emoji || '');

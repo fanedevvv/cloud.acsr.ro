@@ -1027,7 +1027,7 @@ function renderAlbums() {
   // Album nou doar dacă ai poze proprii încărcate
   $('newAlbumBtn').hidden = !(me && me.canMakeAlbum);
   renderAlbumSuggest();
-  for (const a of albums) grid.appendChild(albumCard(a));
+  for (const a of albums) if (!a.hidden) grid.appendChild(albumCard(a));
 }
 
 function renderAlbumSuggest() {
@@ -1248,6 +1248,7 @@ function renderSelActions() {
       if (!selected.size) return;
       openChooser(e.currentTarget);
     }));
+    box.appendChild(selBtn('link', 'Partajează', () => shareSelection([...selected])));
     box.appendChild(selBtn('star', 'Marchează favorite', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: true } }), 'Adăugat la favorite', (id) => api('/api/media/' + id, { method: 'PATCH', body: { favorite: false } }))));
     box.appendChild(selBtn('inventory_2', 'Arhivează', () => bulk((id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: true } }), 'Arhivat', (id) => api('/api/media/' + id, { method: 'PATCH', body: { archived: false } }))));
     box.appendChild(selBtn('lock', 'Mută în folderul blocat', async () => {
@@ -1564,7 +1565,21 @@ async function addToAlbum(albumId, ids) {
 let shareCtx = null; // { kind: 'album'|'photo', id, item? }
 
 async function openShareModal(kind, id, item) {
+  // mod „link brut" — pentru partajarea unei selecții de poze
+  if (kind === 'link') {
+    shareCtx = { kind: 'link', id: null, item: null };
+    $('shareTitle').textContent = 'Link de partajare';
+    $('shareDesc').textContent = (item && item.count ? item.count + ' poze — o' : 'O') + 'ricine are linkul le poate vedea, fără parolă.';
+    $('shareUrl').value = item.url;
+    $('shareQrWrap').hidden = true; $('shareQr').removeAttribute('src');
+    $('shareSuggest').hidden = true;
+    $('shareViews').hidden = true;
+    $('shareRevoke').hidden = true;
+    $('shareModal').hidden = false;
+    return;
+  }
   shareCtx = { kind, id, item: item || null };
+  $('shareRevoke').hidden = false;
   const apiBase = kind === 'album' ? '/api/albums/' + id + '/share' : '/api/media/' + id + '/share';
   const pubPrefix = kind === 'album' ? '/s/' : '/p/';
 
@@ -1586,34 +1601,36 @@ async function openShareModal(kind, id, item) {
 
   $('shareTitle').textContent = kind === 'album' ? 'Partajează albumul' : 'Partajează poza';
   $('shareDesc').textContent = kind === 'album'
-    ? 'Oricine are linkul poate vedea toate pozele din album, fără parolă.'
+    ? 'Oricine are linkul poate vedea toate pozele din album, fără parolă. Linkul nu expiră — îl poți opri oricând.'
     : 'Oricine are linkul poate vedea această poză, fără parolă.';
   $('shareUrl').value = location.origin + pubPrefix + token;
   $('shareQrWrap').hidden = true;
   $('shareQr').removeAttribute('src');
-  const curExp = kind === 'album' ? (cur.album && cur.album.shareExpiresAt) : (item && item.shareExpiresAt);
-  $('shareExpiry').value = '0';
-  updateShareExpiryNote(curExp);
-  $('shareExpiry').onchange = async () => {
-    const days = Number($('shareExpiry').value) || 0;
-    try {
-      const d = await api(apiBase, { method: 'POST', body: { expiresInDays: days } });
-      if (kind === 'album' && cur.album) cur.album.shareExpiresAt = d.expiresAt;
-      if (kind === 'photo' && item) item.shareExpiresAt = d.expiresAt;
-      updateShareExpiryNote(d.expiresAt);
-      toast(days ? 'Linkul expiră în ' + days + (days === 1 ? ' zi' : ' zile') : 'Linkul nu mai expiră');
-    } catch (e) { toast(e.message); }
-  };
   $('shareModal').hidden = false;
-  if (kind === 'album') { renderAlbum(); loadShareSuggestions(id); }
-  else $('shareSuggest').hidden = true;
+  if (kind === 'album') { renderAlbum(); loadShareSuggestions(id); loadShareViews(id); }
+  else { $('shareSuggest').hidden = true; $('shareViews').hidden = true; }
 }
-function updateShareExpiryNote(exp) {
-  const n = $('shareExpiryNote');
-  if (!exp) { n.hidden = true; return; }
-  n.hidden = false;
-  n.textContent = 'Expiră la ' + new Date(exp).toLocaleDateString('ro-RO', { day: 'numeric', month: 'long', year: 'numeric' });
-  if (exp < new Date().toISOString()) n.textContent = 'Linkul a expirat.';
+
+async function loadShareViews(albumId) {
+  const el = $('shareViews');
+  el.hidden = true;
+  let d;
+  try { d = await api('/api/albums/' + albumId + '/share-views'); } catch { return; }
+  if (!d || !d.count) return;
+  const names = (d.named || []).map((v) => v.name).slice(0, 8);
+  let txt = d.count === 1 ? 'Văzut de 1 persoană' : 'Văzut de ' + d.count + ' persoane';
+  if (names.length) txt += ' — ' + names.join(', ') + (d.count > names.length ? ' și alții' : '');
+  el.textContent = txt;
+  el.hidden = false;
+}
+
+async function shareSelection(ids) {
+  if (!ids.length) return;
+  try {
+    const d = await api('/api/share/selection', { method: 'POST', body: { ids } });
+    clearSel();
+    openShareModal('link', null, { url: location.origin + d.path, count: d.count });
+  } catch (e) { toast(e.message); }
 }
 
 async function loadShareSuggestions(albumId) {

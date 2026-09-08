@@ -575,6 +575,8 @@ body.selecting .chk { opacity: 1; }
 .share-qr { display: grid; place-items: center; padding: 4px 0 14px; }
 .share-qr img { width: 200px; height: 200px; background: #fff; border-radius: 8px; padding: 8px; }
 .share-suggest { margin-bottom: 14px; }
+.share-views { font-size: 13px; color: var(--text-dim); margin: 6px 0 12px; display: flex; gap: 6px; align-items: baseline; }
+.share-views::before { content: 'group'; font-family: 'Material Symbols Outlined'; font-size: 16px; }
 .share-exp { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
 .share-exp select { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
 .face-review-stage { display: flex; justify-content: center; margin: 12px 0; }

@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=95">
+  <link rel="stylesheet" href="/assets/styles.css?v=96">
 </head>
 <body>
   <div class="app">
@@ -262,22 +262,14 @@
         <input id="shareUrl" type="text" readonly>
         <button id="shareCopy" class="btn primary">Copiază</button>
       </div>
-      <label class="share-exp">Expiră:
-        <select id="shareExpiry">
-          <option value="0">niciodată</option>
-          <option value="1">peste 1 zi</option>
-          <option value="7">peste 7 zile</option>
-          <option value="30">peste 30 de zile</option>
-        </select>
-      </label>
-      <div id="shareExpiryNote" class="muted" hidden></div>
+      <div id="shareViews" class="share-views muted" hidden></div>
       <div id="shareQrWrap" class="share-qr" hidden><img id="shareQr" alt="Cod QR" width="200" height="200"></div>
       <div id="shareSuggest" class="share-suggest" hidden>
         <p class="muted">Persoane recunoscute în album — trimite-le o notificare:</p>
         <div id="shareSuggestList" class="share-suggest-list"></div>
       </div>
       <div class="modal-actions">
-        <button id="shareRevoke" class="btn ghost danger">Dezactivează linkul</button>
+        <button id="shareRevoke" class="btn ghost danger">Oprește partajarea</button>
         <button id="shareQrBtn" class="btn ghost"><span class="msi">qr_code_2</span>Cod QR</button>
         <button id="shareClose" class="btn">Închide</button>
       </div>
@@ -647,10 +639,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=95"></script>
-  <script src="/assets/veditor.js?v=95"></script>
-  <script src="/assets/scanner.js?v=95"></script>
-  <script src="/assets/app.js?v=95"></script>
-  <script src="/assets/pwa.js?v=95"></script>
+  <script src="/assets/editor.js?v=96"></script>
+  <script src="/assets/veditor.js?v=96"></script>
+  <script src="/assets/scanner.js?v=96"></script>
+  <script src="/assets/app.js?v=96"></script>
+  <script src="/assets/pwa.js?v=96"></script>
 </body>
 </html>
