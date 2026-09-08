@@ -1992,25 +1992,38 @@ db.ready().then(async () => {
   setTimeout(() => { gphotos.resumePending().catch((e) => console.error('gphotos resume:', e)); }, 45000);
   setInterval(() => { purgeTrash().catch((e) => console.error('purge:', e)); }, 6 * 60 * 60 * 1000).unref();
 
+  // Job-uri „grele" de fundal (sharp pe imagini): unul odată, loturi mici,
+  // pauză cât timp rulează un import Google Photos — altfel OOM pe VPS.
+  let heavyBusy = false;
+  const gpImportActive = async () => {
+    try {
+      const r = await db.prepare("SELECT value FROM settings WHERE `key` = 'gphotos_active'").get();
+      const v = r && r.value ? String(r.value) : '';
+      return v && !v.startsWith('PARKED:');
+    } catch { return false; }
+  };
+  const heavy = async (name, fn) => {
+    if (heavyBusy || await gpImportActive()) return;
+    heavyBusy = true;
+    try { await fn(); } catch (e) { console.error(name + ':', e && e.message ? e.message : e); }
+    finally { heavyBusy = false; }
+  };
+
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`cloud.acsr.ro rulează pe http://127.0.0.1:${PORT}`);
-    // în fundal: generează postere pentru clipurile fără thumbnail
     Promise.resolve().then(backfillVideoThumbs).catch((e) => console.error('backfill:', e));
     Promise.resolve().then(backfillHashes).catch((e) => console.error('hashes:', e));
     Promise.resolve().then(backfillExif).catch((e) => console.error('exif:', e));
-    setTimeout(() => { geo.backfillPlaces().catch((e) => console.error('geo:', e)); }, 15000);
-    setTimeout(() => { backfillPreviews().catch((e) => console.error('preview:', e)); }, 25000);
-    setTimeout(() => { backfillBlur().catch((e) => console.error('blur:', e)); }, 30000);
-    setTimeout(() => { backfillDhash().catch((e) => console.error('dhash:', e)); }, 40000);
     setTimeout(() => {
       backup.checkIntegrity(ORIGINAL_DIR).catch(() => {});
       backup.backupNow().then((f) => f && console.log('backup:', path.basename(f))).catch(() => {});
     }, 20000);
+    setTimeout(() => { heavy('preview', () => backfillPreviews(25)); }, 60000);
     setInterval(() => { backup.backupNow().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
-    setInterval(() => { geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
-    setInterval(() => { backfillPreviews().catch(() => {}); }, 15 * 60 * 1000).unref();
-    setInterval(() => { backfillBlur().catch(() => {}); }, 15 * 60 * 1000).unref();
-    setInterval(() => { backfillDhash().catch(() => {}); }, 20 * 60 * 1000).unref();
+    setInterval(() => { if (!heavyBusy) geo.backfillPlaces().catch(() => {}); }, 30 * 60 * 1000).unref();
+    setInterval(() => { heavy('preview', () => backfillPreviews(25)); }, 4 * 60 * 1000).unref();
+    setInterval(() => { heavy('blur', () => backfillBlur(30)); }, 5 * 60 * 1000 + 47000).unref();
+    setInterval(() => { heavy('dhash', () => backfillDhash(40)); }, 6 * 60 * 1000 + 91000).unref();
     // Recompresia automată a originalelor a fost oprită: descărcarea trebuie
     // să dea fișierul original, la calitate deplină. „Optimizează spațiul"
     // din meniu (POST /api/optimize) rămâne disponibilă manual.
