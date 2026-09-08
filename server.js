@@ -25,7 +25,7 @@ const {
   TMP_DIR,
   UUID_RE,
 } = require('./lib/media');
-const { backfillHashes, backfillExif, backfillPreviews, backfillBlur, backfillOptimize, backfillDhash } = require('./lib/media');
+const { backfillHashes, backfillExif, backfillPreviews, backfillBlur, backfillOptimize, backfillDhash, backfillTranscode } = require('./lib/media');
 const takeout = require('./lib/takeout');
 const gphotos = require('./lib/gphotos');
 const optimize = require('./lib/optimize');
@@ -281,9 +281,15 @@ function sendThumb(row, res) {
 }
 
 function sendFull(row, res) {
-  const full = path.join(ORIGINAL_DIR, row.stored_name);
+  // pentru clipuri: dacă avem o variantă transcodată redabilă în browser, o servim pe aia
+  let full = path.join(ORIGINAL_DIR, row.stored_name);
+  let ctype = row.mime || 'application/octet-stream';
+  if (row.type === 'video') {
+    const play = path.join(ORIGINAL_DIR, row.id + '.play.mp4');
+    if (fs.existsSync(play)) { full = play; ctype = 'video/mp4'; }
+  }
   if (!fs.existsSync(full)) return res.status(404).end();
-  res.type(row.mime || 'application/octet-stream');
+  res.type(ctype);
   res.sendFile(full, {
     acceptRanges: true,
     dotfiles: 'deny',
@@ -2083,6 +2089,8 @@ db.ready().then(async () => {
     setInterval(() => { heavy('preview', () => backfillPreviews(25)); }, 4 * 60 * 1000).unref();
     setInterval(() => { heavy('blur', () => backfillBlur(30)); }, 5 * 60 * 1000 + 47000).unref();
     setInterval(() => { heavy('dhash', () => backfillDhash(40)); }, 6 * 60 * 1000 + 91000).unref();
+    setTimeout(() => { heavy('transcode', () => backfillTranscode(1)); }, 120000);
+    setInterval(() => { heavy('transcode', () => backfillTranscode(1)); }, 3 * 60 * 1000 + 23000).unref();
     // Recompresia automată a originalelor a fost oprită: descărcarea trebuie
     // să dea fișierul original, la calitate deplină. „Optimizează spațiul"
     // din meniu (POST /api/optimize) rămâne disponibilă manual.

@@ -2282,6 +2282,14 @@ function showLb() {
     const v = document.createElement('video');
     v.src = '/media/' + it.id + '/full';
     v.controls = true; v.autoplay = true; v.playsInline = true;
+    v.addEventListener('error', () => {
+      lbStage.textContent = '';
+      const box = document.createElement('div');
+      box.className = 'lb-vfallback';
+      box.innerHTML = '<span class="msi">movie</span><p>Clipul se pregătește pentru redare în browser.<br>Reîncearcă în câteva minute sau descarcă-l.</p>'
+        + '<a class="btn primary" href="/media/' + it.id + '/download" download><span class="msi">download</span>Descarcă clipul</a>';
+      lbStage.appendChild(box);
+    });
     lbStage.appendChild(v);
   } else {
     const im = document.createElement('img');
