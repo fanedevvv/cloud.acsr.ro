@@ -55,6 +55,7 @@ let cur = { view: 'all', albumId: null, album: null, items: [] };
 const selected = new Set();
 let lbList = [];
 let lbIndex = -1;
+let lbFromRect = null;   // dreptunghiul plăcuței de unde s-a deschis lightbox-ul (tranziție)
 let slideTimer = null;
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
@@ -81,6 +82,7 @@ let slideTimer = null;
   window.addEventListener('hashchange', route);
   wire();
   observeResize();
+  initScrollDate();
   applyRole();
   try {
     await Promise.all([loadAll(), loadAlbums()]);
@@ -443,8 +445,11 @@ const tileObs = new IntersectionObserver((entries) => {
       if (!b.querySelector('img')) {
         const img = document.createElement('img');
         img.decoding = 'async';
+        img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
+        img.addEventListener('error', () => img.classList.add('loaded'), { once: true });
         img.src = '/media/' + b.dataset.id + '/thumb';
         img.alt = b._name || '';
+        if (img.complete) img.classList.add('loaded');
         b.insertBefore(img, b.firstChild);
         loadedTiles.add(b);
       }
@@ -502,11 +507,18 @@ function jtile(cell) {
     fav.title = 'Favorite';
     fav.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(it, fav); });
     b.appendChild(fav);
+  } else if (it.deletedAt) {
+    const left = Math.max(0, 30 - Math.floor((Date.now() - Date.parse(it.deletedAt)) / 86400000));
+    const t = document.createElement('span');
+    t.className = 'trash-left';
+    t.textContent = left <= 0 ? 'azi' : left === 1 ? '1 zi' : left + ' zile';
+    t.title = 'Se șterge definitiv în ' + t.textContent;
+    b.appendChild(t);
   }
 
   b.addEventListener('click', (e) => {
     if (selected.size > 0 || e.shiftKey) pickTile(it.id, e.shiftKey);
-    else openLightbox(gridData(), it.id);
+    else { lbFromRect = b.getBoundingClientRect(); openLightbox(gridData(), it.id); }
   });
   return b;
 }
@@ -1142,6 +1154,39 @@ function setZoom(z) {
     if (ic) ic.textContent = gridZoom >= 3 ? 'calendar_view_month' : gridZoom === 2 ? 'grid_on' : gridZoom === 0 ? 'view_comfy' : 'grid_view';
   }
   rerender();
+}
+
+// Pastila cu luna curentă în timpul derulării (ca la Google Photos)
+function initScrollDate() {
+  const el = document.createElement('div');
+  el.id = 'scrollDate';
+  document.body.appendChild(el);
+  let raf = 0, hideT = 0, lastY = 0;
+  const update = () => {
+    raf = 0;
+    const grid = $('grid');
+    if (!grid || grid.hidden || !FLAT.includes(cur.view) || isSearching()) { el.classList.remove('show'); return; }
+    const heads = grid.querySelectorAll('.j-dayhead');
+    if (heads.length < 2) { el.classList.remove('show'); return; }
+    let cur1 = null;
+    for (const h of heads) {
+      const r = h.getBoundingClientRect();
+      if (r.top <= 96) cur1 = h; else break;
+    }
+    const txt = (cur1 ? cur1.querySelector('.daylabel') : heads[0].querySelector('.daylabel'));
+    if (txt && txt.textContent) {
+      el.textContent = txt.textContent;
+      el.classList.add('show');
+      clearTimeout(hideT);
+      hideT = setTimeout(() => el.classList.remove('show'), 1100);
+    }
+  };
+  window.addEventListener('scroll', () => {
+    const y = (SCROLLER && SCROLLER.scrollTop) || window.scrollY || 0;
+    if (Math.abs(y - lastY) < 4) return;
+    lastY = y;
+    if (!raf) raf = requestAnimationFrame(update);
+  }, { passive: true, capture: true });
 }
 
 function observeResize() {
@@ -2244,6 +2289,7 @@ function showLb() {
     im.dataset.full = '/media/' + it.id + '/full';
     im.alt = it.originalName || '';
     lbStage.appendChild(im);
+    flipInFromTile(im);
     if (it.liveVideoId) setupLivePhoto(it);
   }
   lbDl.href = '/media/' + it.id + '/download';
@@ -2268,6 +2314,31 @@ function showLb() {
     if (i === lbIndex) el.scrollIntoView({ inline: 'center', block: 'nearest' });
   });
   if (!$('lbInfo').hidden) renderInfo();
+}
+
+// Tranziție de deschidere „ca Google Photos": imaginea pornește din locul
+// plăcuței din grilă și se mărește la ecran.
+function flipInFromTile(im) {
+  const from = lbFromRect;
+  lbFromRect = null;
+  if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const run = () => {
+    const to = im.getBoundingClientRect();
+    if (!to.width || !to.height) return;
+    const sx = from.width / to.width;
+    const sy = from.height / to.height;
+    const tx = (from.left + from.width / 2) - (to.left + to.width / 2);
+    const ty = (from.top + from.height / 2) - (to.top + to.height / 2);
+    im.classList.add('lb-flip');
+    im.style.transformOrigin = 'center center';
+    im.style.transform = `translate(${tx}px,${ty}px) scale(${sx},${sy})`;
+    im.style.opacity = '0.5';
+    // eslint-disable-next-line no-unused-expressions
+    im.offsetWidth; // reflow
+    requestAnimationFrame(() => { im.style.transform = ''; im.style.opacity = ''; });
+    setTimeout(() => { im.classList.remove('lb-flip'); im.style.transformOrigin = ''; }, 320);
+  };
+  if (im.complete) run(); else im.addEventListener('load', run, { once: true });
 }
 
 // Live Photo: badge + redă clipul de mișcare la apăsare lungă / hover
