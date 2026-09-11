@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=101">
+  <link rel="stylesheet" href="/assets/styles.css?v=102">
 </head>
 <body>
   <div class="app">
@@ -453,6 +453,9 @@
       <div id="accErr" class="lock-err" hidden></div>
       <p id="accEditNote" class="muted" hidden>Numele și poza contului pot fi schimbate doar din contul de administrator.</p>
 
+      <h3 class="health-sub">Dispozitive conectate</h3>
+      <div id="sessList" class="sess-list"></div>
+
       <div class="modal-actions">
         <span id="accUser" class="muted"></span>
         <span><button id="accSave" class="btn primary">Salvează</button>
@@ -465,6 +468,8 @@
     <div class="modal-card">
       <h2>Stare & backup</h2>
       <div id="healthBody" class="health-body"></div>
+      <h3 class="health-sub">Jurnal de activitate</h3>
+      <div id="auditBody" class="health-body"></div>
       <div class="modal-actions">
         <button id="healthBackup" class="btn primary">Fă backup acum</button>
         <button id="healthClose" class="btn">Închide</button>
@@ -640,10 +645,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=101"></script>
-  <script src="/assets/veditor.js?v=101"></script>
-  <script src="/assets/scanner.js?v=101"></script>
-  <script src="/assets/app.js?v=101"></script>
-  <script src="/assets/pwa.js?v=101"></script>
+  <script src="/assets/editor.js?v=102"></script>
+  <script src="/assets/veditor.js?v=102"></script>
+  <script src="/assets/scanner.js?v=102"></script>
+  <script src="/assets/app.js?v=102"></script>
+  <script src="/assets/pwa.js?v=102"></script>
 </body>
 </html>

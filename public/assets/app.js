@@ -175,6 +175,17 @@ function updateStorage() {
   $('storageFill').style.width = Math.max(1.5, pct || 4) + '%';
   $('storageFill').classList.toggle('warn', tier === 'warn');
   $('storageFill').classList.toggle('full', tier === 'full');
+
+  if (tier === 'full' && isAdmin) {
+    try {
+      const key = 'storageAlertDay';
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem(key) !== today) {
+        localStorage.setItem(key, today);
+        toast('Spațiu de stocare aproape plin (' + Math.round(pct) + '%)');
+      }
+    } catch {}
+  }
 }
 
 // ─── Temă ──────────────────────────────────────────────────────────────────
@@ -3024,6 +3035,34 @@ window.__cloudUpload = (files) => uploadFiles([...files]);
 window.__api = api;
 
 // ─── Contul meu ───────────────────────────────────────────────────────────
+async function loadSessions() {
+  const box = $('sessList');
+  if (!box) return;
+  box.innerHTML = '<p class="muted">Se încarcă…</p>';
+  let rows;
+  try { rows = await api('/api/sessions'); } catch (e) { box.innerHTML = '<p class="muted">' + e.message + '</p>'; return; }
+  if (!rows.length) { box.innerHTML = '<p class="muted">Niciun dispozitiv.</p>'; return; }
+  box.innerHTML = '';
+  for (const s of rows) {
+    const row = document.createElement('div');
+    row.className = 'sess-row';
+    const when = s.loginAt ? new Date(s.loginAt).toLocaleString('ro-RO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    row.innerHTML = '<span class="msi">' + (/iPhone|iPad|Android/.test(s.device) ? 'smartphone' : 'computer') + '</span>'
+      + '<div class="sess-info"><b>' + escapeHtml(s.device) + (s.current ? ' <span class="sess-current">(acest dispozitiv)</span>' : '') + '</b>'
+      + '<span class="muted">' + when + '</span></div>';
+    if (!s.current) {
+      const btn = document.createElement('button');
+      btn.className = 'icon-btn2'; btn.title = 'Deconectează'; btn.innerHTML = '<span class="msi">logout</span>';
+      btn.onclick = async () => {
+        try { await api('/api/sessions/' + encodeURIComponent(s.id), { method: 'DELETE' }); toast('Dispozitiv deconectat'); loadSessions(); }
+        catch (e) { toast(e.message); }
+      };
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  }
+}
+
 function wireAccount() {
   const acc = $('accountModal');
   if (!acc) return;
@@ -3042,6 +3081,7 @@ function wireAccount() {
     $('accSave').hidden = !isAdmin;
     $('accEditNote').hidden = isAdmin;
     acc.hidden = false;
+    loadSessions();
   };
   $('accClose').onclick = () => { acc.hidden = true; };
   $('accAvatarBtn').onclick = () => $('accAvatarInput').click();
@@ -3477,6 +3517,31 @@ function wire() {
       }
     }
     box.innerHTML = html;
+    loadAudit();
+  }
+
+  const AUDIT_LABEL = {
+    login: 'Conectare', login_fail: 'Autentificare eșuată', logout: 'Deconectare',
+    session_revoke: 'Sesiune deconectată de la distanță',
+    upload: 'Încărcare', media_trash: 'Mutat în coș', media_restore: 'Restaurat din coș',
+    media_delete: 'Șters definitiv', trash_empty: 'Coș golit',
+    album_create: 'Album creat', album_delete: 'Album șters',
+    album_share: 'Album partajat', album_unshare: 'Partajare album oprită',
+    gphotos_import: 'Import Google Photos', account_rename: 'Nume cont schimbat',
+  };
+  async function loadAudit() {
+    const box = $('auditBody');
+    if (!box) return;
+    box.innerHTML = '<p class="muted">Se încarcă…</p>';
+    let rows;
+    try { rows = await api('/api/audit?limit=60'); } catch (e) { box.innerHTML = '<p class="muted">' + e.message + '</p>'; return; }
+    if (!rows.length) { box.innerHTML = '<p class="muted">Niciun eveniment încă.</p>'; return; }
+    box.innerHTML = rows.map((r) => {
+      const when = new Date(r.at).toLocaleString('ro-RO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const label = AUDIT_LABEL[r.action] || r.action;
+      return '<div class="hrow job"><span>' + escapeHtml(label) + ' — ' + escapeHtml(r.actorName) + '</span><b>'
+        + (r.detail ? escapeHtml(r.detail) + ' · ' : '') + when + '</b></div>';
+    }).join('');
   }
   $('healthBtn').onclick = (e) => { e.stopPropagation(); $('acctMenu').hidden = true; $('healthModal').hidden = false; loadHealth(); };
   $('healthClose').onclick = () => { $('healthModal').hidden = true; };

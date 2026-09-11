@@ -118,6 +118,27 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+// ─── Jurnal de activitate (audit log) ────────────────────────────────────────
+function actorLabel(req) {
+  if (req.session && req.session.displayName) return req.session.displayName;
+  if (req.session && req.session.role === 'admin') return 'Administrator';
+  return 'Vizitator';
+}
+async function logActivity(req, action, detail) {
+  try {
+    await db.prepare(
+      'INSERT INTO audit_log (actor_id, actor_name, action, detail, ip, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(
+      (req.session && req.session.userId) || null,
+      actorLabel(req),
+      action,
+      detail ? String(detail).slice(0, 500) : null,
+      req.ip || null,
+      new Date().toISOString()
+    );
+  } catch (e) { console.error('audit log:', e && e.message ? e.message : e); }
+}
+
 async function getRow(id) {
   if (!UUID_RE.test(String(id || ''))) return null;
   return db.prepare('SELECT * FROM media WHERE id = ?').get(id);
@@ -374,6 +395,26 @@ function requireAccount(req, res, next) {
   return res.status(401).json({ error: 'conectează-te' });
 }
 
+// Etichetă scurtă de dispozitiv din User-Agent, fără dependințe externe.
+function deviceLabel(ua) {
+  ua = String(ua || '');
+  let os = 'Necunoscut';
+  if (/iPhone/i.test(ua)) os = 'iPhone';
+  else if (/iPad/i.test(ua)) os = 'iPad';
+  else if (/Android/i.test(ua)) os = 'Android';
+  else if (/Windows/i.test(ua)) os = 'Windows';
+  else if (/Macintosh|Mac OS X/i.test(ua)) os = 'Mac';
+  else if (/Linux/i.test(ua)) os = 'Linux';
+  let browser = '';
+  if (/Edg\//i.test(ua)) browser = 'Edge';
+  else if (/OPR\/|Opera/i.test(ua)) browser = 'Opera';
+  else if (/Chrome\//i.test(ua)) browser = 'Chrome';
+  else if (/CriOS/i.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+  else if (/Safari\//i.test(ua)) browser = 'Safari';
+  return browser ? os + ' · ' + browser : os;
+}
+
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
   const username = String(req.body && req.body.username || '').trim().toLowerCase();
   const password = String(req.body && req.body.password || '');
@@ -382,7 +423,10 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(wantAdmin ? ADMIN_ID : ACCOUNT_ID);
   let ok = false;
   try { ok = u && u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
-  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
+  if (!ok) {
+    await logActivity(req, 'login_fail', 'utilizator: ' + (wantAdmin ? 'admin' : 'cont'));
+    return res.status(401).json({ error: 'parolă greșită' });
+  }
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
     req.session.authed = true;
@@ -390,7 +434,23 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
     req.session.displayName = u.display_name;
     req.session.role = u.is_admin ? 'admin' : 'user';
     req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.save(() => res.json({ ok: true, role: req.session.role, user: pubUser(u) }));
+    req.session.device = deviceLabel(req.get('user-agent'));
+    req.session.ip = req.ip;
+    req.session.loginAt = new Date().toISOString();
+    req.session.save(async () => {
+      await logActivity(req, 'login', req.session.device);
+      res.json({ ok: true, role: req.session.role, user: pubUser(u) });
+      // curăță sesiunile orfane, dinainte de sistemul de dispozitive (fără loginAt)
+      try {
+        const rows = await db.prepare('SELECT session_id, data FROM sessions').all();
+        for (const r of rows) {
+          let d; try { d = JSON.parse(r.data || '{}'); } catch { continue; }
+          if (d.userId === u.id && !d.loginAt && r.session_id !== req.sessionID) {
+            await db.prepare('DELETE FROM sessions WHERE session_id = ?').run(r.session_id);
+          }
+        }
+      } catch (e) { console.error('curățare sesiuni:', e && e.message ? e.message : e); }
+    });
   });
 });
 
@@ -406,6 +466,7 @@ app.patch('/api/account', requireAdmin, checkCsrf, jsonBody, async (req, res) =>
   if (!name) return res.status(400).json({ error: 'nume gol' });
   await db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, ACCOUNT_ID);
   await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, ACCOUNT_ID);
+  await logActivity(req, 'account_rename', name);
   res.json({ ok: true, profile: await accountProfile() });
 });
 
@@ -437,11 +498,44 @@ app.get('/api/users/:id/avatar', async (req, res) => {
   res.send('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="hsl(' + hue + ',45%,55%)"/><text x="100" y="100" dy="0.35em" font-family="Roboto,sans-serif" font-size="88" fill="#fff" text-anchor="middle">' + ini + '</text></svg>');
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', async (req, res) => {
+  if (req.session && req.session.userId) await logActivity(req, 'logout', req.session.device);
   req.session.destroy(() => {
     res.clearCookie('sid');
     res.json({ ok: true });
   });
+});
+
+// ─── Dispozitive conectate (sesiuni active pe contul curent) ────────────────
+app.get('/api/sessions', requireAccount, async (req, res) => {
+  const rows = await db.prepare('SELECT session_id, expires, data FROM sessions WHERE expires > ?').all(Math.floor(Date.now() / 1000));
+  const mine = req.session.userId;
+  const out = [];
+  for (const r of rows) {
+    let d; try { d = JSON.parse(r.data || '{}'); } catch { continue; }
+    if (d.userId !== mine) continue;
+    if (!d.loginAt && r.session_id !== req.sessionID) continue; // sesiuni vechi, dinainte de acest sistem
+    out.push({
+      id: r.session_id,
+      device: d.device || 'Necunoscut',
+      loginAt: d.loginAt || null,
+      current: r.session_id === req.sessionID,
+    });
+  }
+  out.sort((a, b) => (b.current - a.current) || String(b.loginAt).localeCompare(String(a.loginAt)));
+  res.json(out);
+});
+
+app.delete('/api/sessions/:id', requireAccount, checkCsrf, async (req, res) => {
+  const sid = String(req.params.id);
+  if (sid === req.sessionID) return res.status(400).json({ error: 'folosește Ieși din cont pentru sesiunea curentă' });
+  const row = await db.prepare('SELECT data FROM sessions WHERE session_id = ?').get(sid);
+  if (!row) return res.status(404).json({ error: 'sesiune inexistentă' });
+  let d; try { d = JSON.parse(row.data || '{}'); } catch { d = {}; }
+  if (d.userId !== req.session.userId) return res.status(403).json({ error: 'nu ai voie' });
+  await db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sid);
+  await logActivity(req, 'session_revoke', d.device || '');
+  res.json({ ok: true });
 });
 
 app.get('/api/csrf', async (req, res) => {
@@ -557,6 +651,18 @@ app.get('/api/admin/health', requireAdmin, async (req, res) => {
 app.post('/api/admin/backup', requireAdmin, checkCsrf, async (req, res) => {
   const f = await backup.backupNow();
   res.json({ ok: !!f, file: f ? path.basename(f) : null, lastBackup: backup.lastBackup() });
+});
+
+// Jurnal de activitate (audit trail) — doar admin
+app.get('/api/audit', requireAdmin, async (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 80));
+  const beforeId = Number(req.query.before) || 0;
+  const rows = beforeId
+    ? await db.prepare('SELECT * FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT ?').all(beforeId, limit)
+    : await db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(limit);
+  res.json(rows.map((r) => ({
+    id: r.id, actorName: r.actor_name, action: r.action, detail: r.detail, ip: r.ip, at: r.created_at,
+  })));
 });
 
 app.get('/api/stats', requireAuth, async (req, res) => {
@@ -1243,6 +1349,7 @@ app.post('/api/media/:id/trash', requireAdmin, checkCsrf, async (req, res) => {
   const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   await db.prepare('UPDATE media SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
+  await logActivity(req, 'media_trash', row.original_name || row.id);
   res.json({ ok: true });
 });
 
@@ -1250,6 +1357,7 @@ app.post('/api/media/:id/restore', requireAdmin, checkCsrf, async (req, res) => 
   const row = await getRow(req.params.id);
   if (!row) return res.status(404).json({ error: 'nu există' });
   await db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(row.id);
+  await logActivity(req, 'media_restore', row.original_name || row.id);
   res.json({ ok: true });
 });
 
@@ -1261,6 +1369,7 @@ app.post('/api/trash/empty', requireAdmin, checkCsrf, async (req, res) => {
     fs.rmSync(path.join(THUMB_DIR, `${r.id}.preview.webp`), { force: true });
     await db.prepare('DELETE FROM media WHERE id = ?').run(r.id);
   }
+  await logActivity(req, 'trash_empty', rows.length + ' elemente');
   res.json({ ok: true, deleted: rows.length });
 });
 
@@ -1292,6 +1401,8 @@ app.post('/api/upload', requireAccount, uploadLimiter, checkCsrf, upload.array('
         items.push({ error: e.message || 'procesare eșuată', name: file.originalname });
       }
     }
+    const okCount = items.filter((it) => !it.error).length;
+    if (okCount) await logActivity(req, 'upload', okCount + ' fișiere');
     res.json({ items });
   } catch (e) {
     next(e);
@@ -1322,6 +1433,7 @@ app.post('/api/import/gphotos', requireAccount, checkCsrf, jsonBody, async (req,
   const job = gphotos.newJob();
   job._log = await joblog.start('Import link Google Photos');
   gphotos.runImport(url, job, cu ? cu.id : null).catch((e) => console.error('gphotos:', e));
+  await logActivity(req, 'gphotos_import', url);
   res.json({ jobId: job.id });
 });
 
@@ -1479,6 +1591,7 @@ app.delete('/api/media/:id', requireAdmin, checkCsrf, async (req, res) => {
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.webp`), { force: true });
   fs.rmSync(path.join(THUMB_DIR, `${row.id}.preview.webp`), { force: true });
   await db.prepare('DELETE FROM media WHERE id = ?').run(row.id); // cascade album_items
+  await logActivity(req, 'media_delete', row.original_name || row.id);
   res.json({ ok: true });
 });
 
@@ -1495,6 +1608,7 @@ app.post('/api/albums', requireAccount, checkCsrf, jsonBody, async (req, res) =>
   const id = crypto.randomUUID();
   await db.prepare('INSERT INTO albums (id, name, created_at, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, new Date().toISOString(), u ? u.id : null, u ? u.display_name : (req.session.role === 'admin' ? 'Administrator' : 'Vizitator'));
+  await logActivity(req, 'album_create', name);
   res.json(await albumSummary(await getAlbum(id)));
 });
 
@@ -1559,6 +1673,7 @@ app.delete('/api/albums/:id', requireAlbumOwner, checkCsrf, async (req, res) => 
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   await db.prepare('DELETE FROM albums WHERE id = ?').run(a.id); // cascade album_items
+  await logActivity(req, 'album_delete', a.name);
   res.json({ ok: true });
 });
 
@@ -1598,6 +1713,7 @@ app.post('/api/albums/:id/share', requireAlbumOwner, checkCsrf, jsonBody, async 
   const token = a.share_token || crypto.randomBytes(24).toString('base64url');
   await db.prepare('UPDATE albums SET share_token = ?, share_created_at = ?, share_expires_at = NULL WHERE id = ?')
     .run(token, a.share_created_at || new Date().toISOString(), a.id);
+  if (!a.share_token) await logActivity(req, 'album_share', a.name);
   res.json({ token, path: `/s/${token}` });
 });
 
@@ -1605,6 +1721,7 @@ app.delete('/api/albums/:id/share', requireAlbumOwner, checkCsrf, async (req, re
   const a = await getAlbum(req.params.id);
   if (!a) return res.status(404).json({ error: 'nu există' });
   await db.prepare('UPDATE albums SET share_token = NULL, share_created_at = NULL WHERE id = ?').run(a.id);
+  await logActivity(req, 'album_unshare', a.name);
   res.json({ ok: true });
 });
 

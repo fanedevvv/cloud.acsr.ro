@@ -979,6 +979,17 @@ body.selecting .chk { opacity: 1; }
 .hrow.job { font-size: 12px; padding: 6px 2px; }
 .hrow.job span { color: var(--text); }
 .hrow.job b { color: var(--text-dim); font-weight: 400; text-align: right; }
+#healthModal .modal-card { max-height: 85vh; overflow-y: auto; }
+.health-sub { margin: 14px 0 2px; font-size: 14px; font-weight: 500; }
+#auditBody { max-height: 240px; overflow-y: auto; }
+
+/* ─── Dispozitive conectate ─── */
+.sess-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; max-height: 200px; overflow-y: auto; }
+.sess-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.sess-row .msi { color: var(--text-dim); font-size: 22px; }
+.sess-info { display: flex; flex-direction: column; flex: 1; gap: 1px; }
+.sess-info .muted { font-size: 12px; }
+.sess-current { color: var(--accent); font-weight: 400; font-size: 12px; }
 
 /* ── Conturi  v54 ────────────────────────────────────────────────────── */
 .login-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
