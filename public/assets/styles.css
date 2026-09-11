@@ -303,7 +303,8 @@ body {
 .evt-card .evt-dismiss .msi { font-size: 16px; }
 
 /* ─── Grilă justified ─── */
-.j-scroll { max-width: 1720px; margin: 0 auto; padding: 6px 12px 48px; overflow-x: hidden; }
+#viewGrid.view, #viewThings.view, #viewPeople.view, #viewAlbum.view { overflow-x: hidden; }
+.j-scroll { max-width: 1720px; margin: 0 auto; padding: 6px 12px 48px; }
 .j-day { margin-bottom: 24px; }
 .j-dayhead { display: flex; align-items: center; gap: 10px; margin: 14px 4px 10px; min-height: 24px; }
 .j-dayhead .daylabel { font-size: 14px; font-weight: 500; color: var(--text); }
