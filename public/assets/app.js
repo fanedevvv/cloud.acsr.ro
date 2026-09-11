@@ -84,6 +84,8 @@ let slideTimer = null;
   observeResize();
   initScrollDate();
   applyRole();
+  renderSkeletonGrid($('grid'));
+  renderSkeletonAlbums();
   try {
     await Promise.all([loadAll(), loadAlbums()]);
   } catch { /* api() a redirecționat la 401 */ }
@@ -607,6 +609,49 @@ function gridData() {
   return applyFilters(applySearch(base));
 }
 
+// Schelete (skeleton) cât se încarcă prima dată — înlocuite de randarea reală.
+function renderSkeletonGrid(container) {
+  if (!container || container.children.length) return;
+  const frag = document.createDocumentFragment();
+  for (let d = 0; d < 3; d++) {
+    const day = document.createElement('div');
+    day.className = 'j-skel-day';
+    const head = document.createElement('div');
+    head.className = 'j-skel-head skel';
+    day.appendChild(head);
+    for (let r = 0; r < 2; r++) {
+      const row = document.createElement('div');
+      row.className = 'j-skel-row';
+      for (let t = 0; t < 4; t++) {
+        const tile = document.createElement('div');
+        tile.className = 'j-skel-tile skel';
+        row.appendChild(tile);
+      }
+      day.appendChild(row);
+    }
+    frag.appendChild(day);
+  }
+  container.appendChild(frag);
+}
+function renderSkeletonAlbums() {
+  const grid = $('albumsGrid');
+  if (!grid || grid.children.length) return;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 6; i++) {
+    const card = document.createElement('div');
+    card.className = 'album-card skel-card';
+    const cover = document.createElement('div');
+    cover.className = 'album-cover skel';
+    const nm = document.createElement('div');
+    nm.className = 'album-name skel';
+    const sub = document.createElement('div');
+    sub.className = 'album-sub skel';
+    card.appendChild(cover); card.appendChild(nm); card.appendChild(sub);
+    frag.appendChild(card);
+  }
+  grid.appendChild(frag);
+}
+
 // ─── Randare ───────────────────────────────────────────────────────────────
 function renderGrid() {
   const list = gridData();
@@ -985,10 +1030,19 @@ function albumCard(a) {
   card.href = '#/album/' + a.id;
   const cover = document.createElement('div');
   cover.className = 'album-cover';
-  if (a.coverId) {
+  const covers = (a.coverIds && a.coverIds.length ? a.coverIds : (a.coverId ? [a.coverId] : []));
+  if (covers.length > 1) {
+    cover.classList.add('mosaic', 'mosaic-' + covers.length);
+    for (const id of covers) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = '/media/' + id + '/thumb';
+      cover.appendChild(img);
+    }
+  } else if (covers.length === 1) {
     const img = document.createElement('img');
     img.loading = 'lazy';
-    img.src = '/media/' + a.coverId + '/thumb';
+    img.src = '/media/' + covers[0] + '/thumb';
     cover.appendChild(img);
   } else {
     cover.classList.add('empty');
@@ -2808,6 +2862,10 @@ async function shrinkForUpload(file) {
 async function uploadFiles(files, opts) {
   opts = opts || {};
   $('uploadTray').hidden = false;
+  const topBar = $('uploadTopBar');
+  const topFill = $('uploadTopFill');
+  if (topBar) { topBar.hidden = false; topFill.style.width = '0%'; }
+  const setTopProgress = (frac) => { if (topFill) topFill.style.width = Math.max(0, Math.min(100, frac * 100)).toFixed(1) + '%'; };
   const list = $('uploadList');
   const rows = files.map((f) => {
     const li = document.createElement('li');
@@ -2835,7 +2893,7 @@ async function uploadFiles(files, opts) {
     $('uploadTitle').textContent = 'Se încarcă ' + (i + 1) + '/' + files.length + '…';
     try {
       const f = await shrinkForUpload(files[i]).catch(() => files[i]);
-      const id = await uploadOne(f, rows[i].fill);
+      const id = await uploadOne(f, rows[i].fill, (pct) => setTopProgress((i + pct / 100) / files.length));
       if (id) newIds.push(id);
       rows[i].li.classList.add('ok');
       ok++;
@@ -2844,7 +2902,9 @@ async function uploadFiles(files, opts) {
       rows[i].fill.style.width = '100%';
       rows[i].li.title = e && e.message ? e.message : 'eșuat';
     }
+    setTopProgress((i + 1) / files.length);
   }
+  if (topBar) setTimeout(() => { topBar.hidden = true; }, 400);
 
   let added = 0;
   if (opts.albumId && newIds.length) {
@@ -2867,7 +2927,7 @@ async function uploadFiles(files, opts) {
   return newIds;
 }
 
-function uploadOne(file, fill) {
+function uploadOne(file, fill, onProgress) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append('files', file);
@@ -2875,7 +2935,10 @@ function uploadOne(file, fill) {
     xhr.open('POST', '/api/upload');
     xhr.setRequestHeader('x-csrf-token', csrf);
     xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable) fill.style.width = ((e.loaded / e.total) * 100).toFixed(1) + '%';
+      if (!e.lengthComputable) return;
+      const pct = (e.loaded / e.total) * 100;
+      fill.style.width = pct.toFixed(1) + '%';
+      if (onProgress) onProgress(pct);
     });
     xhr.addEventListener('load', () => {
       if (xhr.status === 401) return location.replace('/login');

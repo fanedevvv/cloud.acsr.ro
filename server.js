@@ -194,6 +194,7 @@ async function albumSummary(a) {
       count: items.length,
       firstAt: dates[0] || null, lastAt: dates[dates.length - 1] || null,
       coverId: (a.cover_id && items.some((m) => m.id === a.cover_id)) ? a.cover_id : (items[0] ? items[0].id : null),
+      coverIds: items.slice(0, 4).map((m) => m.id),
       shareToken: a.share_token || null,
       allowComments: a.allow_comments == null ? true : !!a.allow_comments,
       allowContrib: false,
@@ -213,11 +214,12 @@ async function albumSummary(a) {
     FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
   `).get(a.id);
-  const newest = await db.prepare(`
+  const newest4 = await db.prepare(`
     SELECT m.id FROM album_items ai JOIN media m ON m.id = ai.media_id
     WHERE ai.album_id = ? AND m.deleted_at IS NULL AND m.locked = 0 AND m.is_live_motion = 0
-    ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 1
-  `).get(a.id);
+    ORDER BY COALESCE(m.taken_at, m.created_at) DESC LIMIT 4
+  `).all(a.id);
+  const newest = newest4[0] || null;
   // coperta aleasă manual, dacă e încă un membru valid; altfel cea mai recentă
   let coverId = null;
   if (a.cover_id) {
@@ -228,6 +230,8 @@ async function albumSummary(a) {
     if (ok) coverId = a.cover_id;
   }
   if (!coverId) coverId = newest ? newest.id : null;
+  const restIds = newest4.map((r) => r.id).filter((id) => id !== coverId);
+  const coverIds = [coverId, ...restIds].filter(Boolean).slice(0, 4);
   return {
     id: a.id,
     name: a.name,
@@ -236,6 +240,7 @@ async function albumSummary(a) {
     firstAt: agg.firstAt || null,
     lastAt: agg.lastAt || null,
     coverId,
+    coverIds,
     shareToken: a.share_token || null,
     allowComments: a.allow_comments == null ? true : !!a.allow_comments,
     allowContrib: !!a.allow_contrib,
