@@ -30,6 +30,7 @@ const takeout = require('./lib/takeout');
 const gphotos = require('./lib/gphotos');
 const optimize = require('./lib/optimize');
 const push = require('./lib/push');
+const totp = require('./lib/totp');
 
 const PORT = Number(process.env.PORT) || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
@@ -366,7 +367,7 @@ const avatarUpload = multer({ dest: TMP_DIR, limits: { fileSize: 8 * 1024 * 1024
 
 async function currentUser(req) {
   if (!req.session || !req.session.userId) return null;
-  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin FROM users WHERE id = ?').get(req.session.userId);
+  const u = await db.prepare('SELECT id, username, display_name, has_avatar, is_admin, pass_hash, totp_enabled FROM users WHERE id = ?').get(req.session.userId);
   if (!u) return null;
   return u;
 }
@@ -415,6 +416,33 @@ function deviceLabel(ua) {
   return browser ? os + ' · ' + browser : os;
 }
 
+function finishLogin(req, res, u) {
+  req.session.authed = true;
+  req.session.userId = u.id;
+  req.session.displayName = u.display_name;
+  req.session.role = u.is_admin ? 'admin' : 'user';
+  req.session.csrf = crypto.randomBytes(32).toString('hex');
+  req.session.device = deviceLabel(req.get('user-agent'));
+  req.session.ip = req.ip;
+  req.session.loginAt = new Date().toISOString();
+  delete req.session.pending2faUserId;
+  delete req.session.pending2faAt;
+  req.session.save(async () => {
+    await logActivity(req, 'login', req.session.device);
+    res.json({ ok: true, role: req.session.role, user: pubUser(u) });
+    // curăță sesiunile orfane, dinainte de sistemul de dispozitive (fără loginAt)
+    try {
+      const rows = await db.prepare('SELECT session_id, data FROM sessions').all();
+      for (const r of rows) {
+        let d; try { d = JSON.parse(r.data || '{}'); } catch { continue; }
+        if (d.userId === u.id && !d.loginAt && r.session_id !== req.sessionID) {
+          await db.prepare('DELETE FROM sessions WHERE session_id = ?').run(r.session_id);
+        }
+      }
+    } catch (e) { console.error('curățare sesiuni:', e && e.message ? e.message : e); }
+  });
+}
+
 app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req, res) => {
   const username = String(req.body && req.body.username || '').trim().toLowerCase();
   const password = String(req.body && req.body.password || '');
@@ -429,29 +457,47 @@ app.post('/api/login', loginLimiter, express.json({ limit: '4kb' }), async (req,
   }
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'eroare server' });
-    req.session.authed = true;
-    req.session.userId = u.id;
-    req.session.displayName = u.display_name;
-    req.session.role = u.is_admin ? 'admin' : 'user';
-    req.session.csrf = crypto.randomBytes(32).toString('hex');
-    req.session.device = deviceLabel(req.get('user-agent'));
-    req.session.ip = req.ip;
-    req.session.loginAt = new Date().toISOString();
-    req.session.save(async () => {
-      await logActivity(req, 'login', req.session.device);
-      res.json({ ok: true, role: req.session.role, user: pubUser(u) });
-      // curăță sesiunile orfane, dinainte de sistemul de dispozitive (fără loginAt)
-      try {
-        const rows = await db.prepare('SELECT session_id, data FROM sessions').all();
-        for (const r of rows) {
-          let d; try { d = JSON.parse(r.data || '{}'); } catch { continue; }
-          if (d.userId === u.id && !d.loginAt && r.session_id !== req.sessionID) {
-            await db.prepare('DELETE FROM sessions WHERE session_id = ?').run(r.session_id);
-          }
-        }
-      } catch (e) { console.error('curățare sesiuni:', e && e.message ? e.message : e); }
-    });
+    if (u.totp_enabled) {
+      req.session.pending2faUserId = u.id;
+      req.session.pending2faAt = Date.now();
+      return req.session.save(() => res.json({ ok: true, need2fa: true }));
+    }
+    finishLogin(req, res, u);
   });
+});
+
+const totpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 20,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'prea multe încercări, reîncearcă mai târziu' },
+});
+
+app.post('/api/login/2fa', totpLimiter, express.json({ limit: '4kb' }), async (req, res) => {
+  const pendingId = req.session && req.session.pending2faUserId;
+  if (!pendingId || (Date.now() - (req.session.pending2faAt || 0)) > 5 * 60 * 1000) {
+    return res.status(400).json({ error: 'sesiune expirată, autentifică-te din nou' });
+  }
+  const u = await db.prepare('SELECT * FROM users WHERE id = ?').get(pendingId);
+  if (!u || !u.totp_enabled) return res.status(400).json({ error: 'eroare server' });
+  const code = String(req.body && req.body.code || '').trim();
+  let good = totp.verifyTotp(u.totp_secret, code);
+  if (!good && code) {
+    // cod de rezervă (o singură dată)
+    let codes = [];
+    try { codes = JSON.parse(u.totp_backup_codes || '[]'); } catch { codes = []; }
+    const hash = crypto.createHash('sha256').update(code.toLowerCase().replace(/\s+/g, '')).digest('hex');
+    const idx = codes.indexOf(hash);
+    if (idx >= 0) {
+      good = true;
+      codes.splice(idx, 1);
+      await db.prepare('UPDATE users SET totp_backup_codes = ? WHERE id = ?').run(JSON.stringify(codes), u.id);
+    }
+  }
+  if (!good) {
+    await logActivity(req, 'login_fail', '2FA greșit');
+    return res.status(401).json({ error: 'cod greșit' });
+  }
+  finishLogin(req, res, u);
 });
 
 app.get('/api/me', async (req, res) => res.json({
@@ -468,6 +514,54 @@ app.patch('/api/account', requireAdmin, checkCsrf, jsonBody, async (req, res) =>
   await db.prepare('UPDATE albums SET owner_name = ? WHERE owner_id = ?').run(name, ACCOUNT_ID);
   await logActivity(req, 'account_rename', name);
   res.json({ ok: true, profile: await accountProfile() });
+});
+
+// ─── Autentificare în doi pași (TOTP) ────────────────────────────────────────
+app.get('/api/account/2fa/status', requireAccount, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(401).json({ error: 'conectează-te' });
+  res.json({ enabled: !!u.totp_enabled });
+});
+
+app.post('/api/account/2fa/setup', requireAccount, checkCsrf, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(401).json({ error: 'conectează-te' });
+  if (u.totp_enabled) return res.status(400).json({ error: 'deja activată' });
+  const secret = totp.generateSecret();
+  req.session.pendingTotpSecret = secret;
+  req.session.save(async () => {
+    const url = totp.otpauthUrl(secret, u.username, 'Cloud ACSR');
+    const qr = await QRCode.toDataURL(url, { margin: 1, width: 220 });
+    res.json({ secret, otpauthUrl: url, qr });
+  });
+});
+
+app.post('/api/account/2fa/enable', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(401).json({ error: 'conectează-te' });
+  const secret = req.session.pendingTotpSecret;
+  if (!secret) return res.status(400).json({ error: 'reia configurarea' });
+  const code = String(req.body && req.body.code || '').trim();
+  if (!totp.verifyTotp(secret, code)) return res.status(400).json({ error: 'cod greșit' });
+  const backupCodes = totp.generateBackupCodes(8);
+  const hashed = backupCodes.map((c) => crypto.createHash('sha256').update(c).digest('hex'));
+  await db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_backup_codes = ? WHERE id = ?')
+    .run(secret, JSON.stringify(hashed), u.id);
+  delete req.session.pendingTotpSecret;
+  await logActivity(req, '2fa_enable', '');
+  req.session.save(() => res.json({ ok: true, backupCodes }));
+});
+
+app.post('/api/account/2fa/disable', requireAccount, checkCsrf, jsonBody, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return res.status(401).json({ error: 'conectează-te' });
+  const password = String(req.body && req.body.password || '');
+  let ok = false;
+  try { ok = u.pass_hash && await bcrypt.compare(password, u.pass_hash); } catch { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'parolă greșită' });
+  await db.prepare('UPDATE users SET totp_secret = NULL, totp_enabled = 0, totp_backup_codes = NULL WHERE id = ?').run(u.id);
+  await logActivity(req, '2fa_disable', '');
+  res.json({ ok: true });
 });
 
 app.post('/api/account/avatar', requireAdmin, checkCsrf, avatarUpload.single('avatar'), async (req, res) => {
@@ -634,6 +728,27 @@ app.get('/api/admin/health', requireAdmin, async (req, res) => {
   try { integrity = await backup.checkIntegrity(ORIGINAL_DIR); } catch {}
   let fsInfo = null;
   try { const st = fs.statfsSync(ORIGINAL_DIR); fsInfo = { total: st.blocks * st.bsize, free: st.bavail * st.bsize }; } catch {}
+
+  // Grafice: încărcări/zi (ultimele 30 zile) și creșterea stocării în timp (cumulativ)
+  const uploadRows = await db.prepare(`
+    SELECT DATE_FORMAT(created_at, '%Y-%m-%d') d, COUNT(*) n
+    FROM media WHERE created_at IS NOT NULL AND created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+    GROUP BY d ORDER BY d
+  `).all();
+  const uploadsByDay = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    const row = uploadRows.find((r) => r.d === d);
+    uploadsByDay.push({ date: d, n: row ? row.n : 0 });
+  }
+  const sizeRows = await db.prepare(`
+    SELECT DATE_FORMAT(created_at, '%Y-%m-%d') d, SUM(size) s
+    FROM media WHERE deleted_at IS NULL AND created_at IS NOT NULL
+    GROUP BY d ORDER BY d
+  `).all();
+  let running = 0;
+  const storageGrowth = sizeRows.map((r) => { running += Number(r.s) || 0; return { date: r.d, bytes: running }; });
+
   res.json({
     media: by,
     trash: { count: trashed.n, bytes: trashed.b },
@@ -645,6 +760,7 @@ app.get('/api/admin/health', requireAdmin, async (req, res) => {
     integrity, fs: fsInfo,
     lastBackup: backup.lastBackup(),
     jobHistory: await joblog.recent(15),
+    uploadsByDay, storageGrowth,
   });
 });
 
@@ -2152,7 +2268,9 @@ async function ensureAccounts() {
     const hash = await bcrypt.hash(plainPass, 10);
     const ex = await db.prepare('SELECT id FROM users WHERE id = ?').get(id);
     if (ex) {
-      await db.prepare('UPDATE users SET username = ?, pass_hash = ?, is_admin = ?, google_id = NULL, email = NULL, totp_secret = NULL, totp_enabled = 0, totp_backup_codes = NULL, partner_id = NULL WHERE id = ?')
+      // Nu atinge totp_* — autentificarea în doi pași e o setare reală a
+      // contului, nu trebuie ștearsă la fiecare repornire a serverului.
+      await db.prepare('UPDATE users SET username = ?, pass_hash = ?, is_admin = ?, google_id = NULL, email = NULL, partner_id = NULL WHERE id = ?')
         .run(username, hash, isAdmin ? 1 : 0, id);
     } else {
       await db.prepare('INSERT INTO users (id, username, pass_hash, display_name, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)')

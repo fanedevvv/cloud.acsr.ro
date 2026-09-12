@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/assets/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.css">
   <link rel="stylesheet" href="/assets/vendor/markercluster/markercluster.default.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=102">
+  <link rel="stylesheet" href="/assets/styles.css?v=104">
 </head>
 <body>
   <div class="app">
@@ -453,6 +453,16 @@
       <div id="accErr" class="lock-err" hidden></div>
       <p id="accEditNote" class="muted" hidden>Numele și poza contului pot fi schimbate doar din contul de administrator.</p>
 
+      <div class="acc-2fa">
+        <div class="acc-2fa-head">
+          <div>
+            <b>Autentificare în doi pași</b>
+            <p id="twofaStatus" class="muted">Se încarcă…</p>
+          </div>
+          <button id="twofaToggleBtn" class="btn ghost" type="button">Activează</button>
+        </div>
+      </div>
+
       <h3 class="health-sub">Dispozitive conectate</h3>
       <div id="sessList" class="sess-list"></div>
 
@@ -464,10 +474,47 @@
     </div>
   </div>
 
+  <div id="twofaModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Autentificare în doi pași</h2>
+      <div id="twofaStep1" class="acc-2fa-setup">
+        <p class="muted">Scanează codul cu Google Authenticator, Authy sau orice aplicație TOTP, apoi introdu codul generat.</p>
+        <img id="twofaQr" alt="Cod QR" width="180" height="180">
+        <p class="muted acc-2fa-secret">Sau introdu manual cheia: <code id="twofaSecret"></code></p>
+        <input id="twofaCode" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+      </div>
+      <div id="twofaStep2" hidden>
+        <p class="muted">Salvează aceste coduri de rezervă într-un loc sigur — fiecare poate fi folosit o singură dată, dacă pierzi accesul la aplicația de autentificare.</p>
+        <div id="twofaBackupCodes" class="acc-2fa-codes"></div>
+      </div>
+      <div id="twofaErr" class="lock-err" hidden></div>
+      <div class="modal-actions">
+        <button id="twofaConfirm" class="btn primary">Confirmă</button>
+        <button id="twofaClose" class="btn">Închide</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pwPromptModal" class="modal" hidden>
+    <div class="modal-card">
+      <h2 id="pwPromptTitle">Confirmă parola</h2>
+      <p id="pwPromptMsg" class="muted"></p>
+      <input id="pwPromptInput" type="password" placeholder="Parolă" autocomplete="current-password">
+      <div class="modal-actions">
+        <button id="pwPromptOk" class="btn primary">Confirmă</button>
+        <button id="pwPromptCancel" class="btn">Anulează</button>
+      </div>
+    </div>
+  </div>
+
   <div id="healthModal" class="modal" hidden>
     <div class="modal-card">
       <h2>Stare & backup</h2>
       <div id="healthBody" class="health-body"></div>
+      <h3 class="health-sub">Creșterea stocării</h3>
+      <div id="chartStorage" class="chart-box"></div>
+      <h3 class="health-sub">Încărcări pe zi (ultimele 30 de zile)</h3>
+      <div id="chartUploads" class="chart-box"></div>
       <h3 class="health-sub">Jurnal de activitate</h3>
       <div id="auditBody" class="health-body"></div>
       <div class="modal-actions">
@@ -645,10 +692,10 @@
   <script src="/assets/vendor/markercluster/markercluster.js"></script>
   <script src="/assets/vendor/leaflet-heat/leaflet-heat.js"></script>
   <script src="/assets/vendor/piexif/piexif.js"></script>
-  <script src="/assets/editor.js?v=102"></script>
-  <script src="/assets/veditor.js?v=102"></script>
-  <script src="/assets/scanner.js?v=102"></script>
-  <script src="/assets/app.js?v=102"></script>
-  <script src="/assets/pwa.js?v=102"></script>
+  <script src="/assets/editor.js?v=104"></script>
+  <script src="/assets/veditor.js?v=104"></script>
+  <script src="/assets/scanner.js?v=104"></script>
+  <script src="/assets/app.js?v=104"></script>
+  <script src="/assets/pwa.js?v=104"></script>
 </body>
 </html>

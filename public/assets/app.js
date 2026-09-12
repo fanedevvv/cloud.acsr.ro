@@ -3035,6 +3035,82 @@ window.__cloudUpload = (files) => uploadFiles([...files]);
 window.__api = api;
 
 // ─── Contul meu ───────────────────────────────────────────────────────────
+// Prompt simplu de parolă (window.prompt nu merge fiabil în PWA).
+function passwordPrompt(title, message) {
+  return new Promise((resolve) => {
+    const modal = $('pwPromptModal');
+    $('pwPromptTitle').textContent = title;
+    $('pwPromptMsg').textContent = message || '';
+    const input = $('pwPromptInput');
+    input.value = '';
+    modal.hidden = false;
+    setTimeout(() => input.focus(), 50);
+    const cleanup = (val) => {
+      modal.hidden = true;
+      $('pwPromptOk').onclick = null; $('pwPromptCancel').onclick = null;
+      input.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onKey = (e) => { if (e.key === 'Enter') cleanup(input.value); };
+    input.addEventListener('keydown', onKey);
+    $('pwPromptOk').onclick = () => cleanup(input.value);
+    $('pwPromptCancel').onclick = () => cleanup(null);
+  });
+}
+
+let twofaEnabled = false;
+async function loadTwofaStatus() {
+  const el = $('twofaStatus');
+  if (!el) return;
+  try {
+    const d = await api('/api/account/2fa/status');
+    twofaEnabled = !!d.enabled;
+    el.textContent = twofaEnabled ? 'Activă' : 'Dezactivată';
+    $('twofaToggleBtn').textContent = twofaEnabled ? 'Dezactivează' : 'Activează';
+  } catch (e) { el.textContent = e.message; }
+}
+function wireTwofa() {
+  const modal = $('twofaModal');
+  if (!modal) return;
+  $('twofaToggleBtn').onclick = async () => {
+    if (twofaEnabled) {
+      const pass = await passwordPrompt('Dezactivează autentificarea în doi pași', 'Confirmă parola contului ca să dezactivezi.');
+      if (pass == null) return;
+      try {
+        await api('/api/account/2fa/disable', { method: 'POST', body: { password: pass } });
+        toast('Autentificare în doi pași dezactivată');
+        loadTwofaStatus();
+      } catch (e) { toast(e.message); }
+      return;
+    }
+    $('twofaErr').hidden = true;
+    $('twofaStep1').hidden = false;
+    $('twofaStep2').hidden = true;
+    $('twofaCode').value = '';
+    $('twofaConfirm').textContent = 'Confirmă';
+    $('twofaConfirm').onclick = confirmTwofaSetup;
+    modal.hidden = false;
+    try {
+      const d = await api('/api/account/2fa/setup', { method: 'POST' });
+      $('twofaQr').src = d.qr;
+      $('twofaSecret').textContent = d.secret;
+    } catch (e) { $('twofaErr').textContent = e.message; $('twofaErr').hidden = false; }
+  };
+  async function confirmTwofaSetup() {
+    const code = $('twofaCode').value.trim();
+    $('twofaErr').hidden = true;
+    try {
+      const d = await api('/api/account/2fa/enable', { method: 'POST', body: { code } });
+      $('twofaStep1').hidden = true;
+      $('twofaBackupCodes').innerHTML = d.backupCodes.map((c) => '<code>' + c + '</code>').join('');
+      $('twofaStep2').hidden = false;
+      $('twofaConfirm').textContent = 'Am salvat codurile';
+      $('twofaConfirm').onclick = () => { modal.hidden = true; loadTwofaStatus(); };
+    } catch (e) { $('twofaErr').textContent = e.message; $('twofaErr').hidden = false; }
+  }
+  $('twofaClose').onclick = () => { modal.hidden = true; loadTwofaStatus(); };
+}
+
 async function loadSessions() {
   const box = $('sessList');
   if (!box) return;
@@ -3082,6 +3158,7 @@ function wireAccount() {
     $('accEditNote').hidden = isAdmin;
     acc.hidden = false;
     loadSessions();
+    loadTwofaStatus();
   };
   $('accClose').onclick = () => { acc.hidden = true; };
   $('accAvatarBtn').onclick = () => $('accAvatarInput').click();
@@ -3488,6 +3565,7 @@ function wire() {
   wireMetaEdit();
   wireFaceReview();
   wireAccount();
+  wireTwofa();
 
   // ─── Stare & backup ────────────────────────────────────────────────────
   async function loadHealth() {
@@ -3517,7 +3595,106 @@ function wire() {
       }
     }
     box.innerHTML = html;
+    renderAreaChart($('chartStorage'), h.storageGrowth.map((p) => ({ x: p.date, y: p.bytes })), fmtBytes);
+    renderBarChart($('chartUploads'), h.uploadsByDay.map((p) => ({ x: p.date, y: p.n })), (n) => n + (n === 1 ? ' fișier' : ' fișiere'));
     loadAudit();
+  }
+
+  // ─── Grafice mici (SVG) pentru panoul de stare ─────────────────────────────
+  function chartDims(el) { return { w: Math.max(280, el.clientWidth || 560), h: 130, padL: 4, padR: 4, padT: 8, padB: 18 }; }
+  function fmtChartDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' });
+  }
+  function ensureTooltip(el) {
+    let tip = el.querySelector('.chart-tip');
+    if (!tip) { tip = document.createElement('div'); tip.className = 'chart-tip'; tip.hidden = true; el.appendChild(tip); }
+    return tip;
+  }
+  function renderAreaChart(el, points, fmtY) {
+    if (!el) return;
+    el.innerHTML = '';
+    if (!points.length || !points.some((p) => p.y > 0)) { el.innerHTML = '<p class="muted">Fără date încă.</p>'; return; }
+    const { w, h, padL, padR, padT, padB } = chartDims(el);
+    const maxY = Math.max(1, ...points.map((p) => p.y));
+    const innerW = w - padL - padR, innerH = h - padT - padB;
+    const xAt = (i) => padL + (points.length > 1 ? (i / (points.length - 1)) * innerW : innerW / 2);
+    const yAt = (v) => padT + innerH - (v / maxY) * innerH;
+    const line = points.map((p, i) => (i === 0 ? 'M' : 'L') + xAt(i).toFixed(1) + ',' + yAt(p.y).toFixed(1)).join(' ');
+    const area = line + ` L${xAt(points.length - 1).toFixed(1)},${padT + innerH} L${xAt(0).toFixed(1)},${padT + innerH} Z`;
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('class', 'chart-svg');
+    svg.innerHTML =
+      `<line x1="${padL}" y1="${padT + innerH}" x2="${w - padR}" y2="${padT + innerH}" class="chart-axis"/>` +
+      `<path d="${area}" class="chart-area"/>` +
+      `<path d="${line}" class="chart-line"/>` +
+      `<text x="${padL}" y="${h - 4}" class="chart-axtext">${fmtChartDate(points[0].x)}</text>` +
+      `<text x="${w - padR}" y="${h - 4}" class="chart-axtext" text-anchor="end">${fmtChartDate(points[points.length - 1].x)}</text>` +
+      `<line class="chart-cross" x1="0" y1="${padT}" x2="0" y2="${padT + innerH}" hidden/>` +
+      `<circle class="chart-dot" r="3.5" hidden/>`;
+    el.appendChild(svg);
+    const tip = ensureTooltip(el);
+    const cross = svg.querySelector('.chart-cross'), dot = svg.querySelector('.chart-dot');
+    const overlay = document.createElementNS(svgNS, 'rect');
+    overlay.setAttribute('x', 0); overlay.setAttribute('y', 0); overlay.setAttribute('width', w); overlay.setAttribute('height', h);
+    overlay.setAttribute('fill', 'transparent'); overlay.style.cursor = 'crosshair';
+    svg.appendChild(overlay);
+    const move = (clientX) => {
+      const rect = svg.getBoundingClientRect();
+      const px = ((clientX - rect.left) / rect.width) * w;
+      let i = Math.round(((px - padL) / innerW) * (points.length - 1));
+      i = Math.max(0, Math.min(points.length - 1, i));
+      const p = points[i];
+      cross.setAttribute('x1', xAt(i)); cross.setAttribute('x2', xAt(i)); cross.hidden = false;
+      dot.setAttribute('cx', xAt(i)); dot.setAttribute('cy', yAt(p.y)); dot.hidden = false;
+      tip.innerHTML = '<b>' + fmtY(p.y) + '</b><span>' + fmtChartDate(p.x) + '</span>';
+      tip.hidden = false;
+      const tipX = Math.min(Math.max(0, (xAt(i) / w) * el.clientWidth - 50), el.clientWidth - 100);
+      tip.style.left = tipX + 'px';
+      tip.style.top = Math.max(0, (yAt(p.y) / h) * 130 - 44) + 'px';
+    };
+    overlay.addEventListener('mousemove', (e) => move(e.clientX));
+    overlay.addEventListener('mouseleave', () => { cross.hidden = true; dot.hidden = true; tip.hidden = true; });
+    overlay.addEventListener('touchmove', (e) => { if (e.touches[0]) move(e.touches[0].clientX); }, { passive: true });
+  }
+  function renderBarChart(el, points, fmtY) {
+    if (!el) return;
+    el.innerHTML = '';
+    if (!points.length || !points.some((p) => p.y > 0)) { el.innerHTML = '<p class="muted">Fără date încă.</p>'; return; }
+    const { w, h, padL, padR, padT, padB } = chartDims(el);
+    const maxY = Math.max(1, ...points.map((p) => p.y));
+    const innerW = w - padL - padR, innerH = h - padT - padB;
+    const gap = 2, bw = Math.max(1, innerW / points.length - gap);
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('class', 'chart-svg');
+    let bars = `<line x1="${padL}" y1="${padT + innerH}" x2="${w - padR}" y2="${padT + innerH}" class="chart-axis"/>`;
+    points.forEach((p, i) => {
+      const x = padL + i * (bw + gap);
+      const bh = Math.max(1, (p.y / maxY) * innerH);
+      const y = padT + innerH - bh;
+      bars += `<rect data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" class="chart-bar"/>`;
+    });
+    bars += `<text x="${padL}" y="${h - 4}" class="chart-axtext">${fmtChartDate(points[0].x)}</text>`;
+    bars += `<text x="${w - padR}" y="${h - 4}" class="chart-axtext" text-anchor="end">${fmtChartDate(points[points.length - 1].x)}</text>`;
+    svg.innerHTML = bars;
+    el.appendChild(svg);
+    const tip = ensureTooltip(el);
+    svg.querySelectorAll('.chart-bar').forEach((rect) => {
+      const p = points[Number(rect.dataset.i)];
+      rect.addEventListener('mousemove', (e) => {
+        tip.innerHTML = '<b>' + fmtY(p.y) + '</b><span>' + fmtChartDate(p.x) + '</span>';
+        tip.hidden = false;
+        const bx = Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) / 2;
+        tip.style.left = Math.min(Math.max(0, (bx / w) * el.clientWidth - 50), el.clientWidth - 100) + 'px';
+        tip.style.top = Math.max(0, (Number(rect.getAttribute('y')) / h) * 130 - 44) + 'px';
+        rect.classList.add('hover');
+      });
+      rect.addEventListener('mouseleave', () => { tip.hidden = true; rect.classList.remove('hover'); });
+    });
   }
 
   const AUDIT_LABEL = {
